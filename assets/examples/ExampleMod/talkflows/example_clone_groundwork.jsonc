@@ -1,0 +1,15 @@
+{
+    // Groundwork schema for upcoming runtime clone system.
+    // UseClone defaults to true in code, but is shown explicitly here.
+    "Novice_PalTimer_3": {
+        "UseClone": true,
+        "TalkFlowAssetPath": "/Game/Pal/Blueprint/FlowGraph/NPCTalkFlow/Graph/FABP_CommonBountyTrader.FABP_CommonBountyTrader",
+        "Text": {
+            "MOD_CLONE_GREETING": "Need something? This line is intended for cloned-flow usage."
+        },
+        "Buttons": {
+            "MOD_CLONE_CHOICE_BUY": "Show me the bounty board.",
+            "MOD_CLONE_CHOICE_EXIT": "Maybe later."
+        }
+    }
+}

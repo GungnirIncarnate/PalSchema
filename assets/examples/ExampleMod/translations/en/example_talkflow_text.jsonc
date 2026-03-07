@@ -1,0 +1,7 @@
+{
+    "DT_NpcTalkText": {
+        "BountyTrader": "Need something? I handle bounty contracts.",
+        "CHOICE_BOUNTY_SHOP_BUY": "Show me available bounties.",
+        "CHOICE_BOUNTY_SHOP_EXIT": "The information on the bounties should be with the informants scattered around.\r\nTalk to them and track down the bounties."
+    }
+}

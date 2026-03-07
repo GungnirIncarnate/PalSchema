@@ -34,6 +34,7 @@ namespace constants {
     constexpr std::string palsFolder            = "pals";
     constexpr std::string rawFolder             = "raw";
     constexpr std::string skinsFolder           = "skins";
+    constexpr std::string talkflowsFolder       = "talkflows";
     constexpr std::string translationsFolder    = "translations";
     constexpr std::string resourcesFolder       = "resources";
     constexpr std::string spawnsFolder          = "spawns";
@@ -224,6 +225,10 @@ namespace Palworld {
                                 {
                                     HumanModLoader.Load(data);
                                 }
+                                else if (folderType == constants::talkflowsFolder)
+                                {
+                                    TalkFlowModLoader.Load(data);
+                                }
                                 else if (folderType == constants::rawFolder)
                                 {
                                     RawTableLoader.Reload(data);
@@ -362,6 +367,7 @@ namespace Palworld {
         ItemModLoader.Initialize();
         SkinModLoader.Initialize();
         HelpGuideModLoader.Initialize();
+        TalkFlowModLoader.Initialize();
         SpawnLoader.Initialize();
         PS::Log<LogLevel::Verbose>(STR("Initialized Loaders\n"));
         PS::Log<LogLevel::Normal>(STR("Loading mods...\n"));
@@ -392,6 +398,11 @@ namespace Palworld {
                 auto npcFolder = modPath / constants::npcsFolder;
                 ParseJsonFilesInPath(npcFolder, [&](const nlohmann::json& data) {
                     HumanModLoader.Load(data);
+                });
+
+                auto talkflowFolder = modPath / constants::talkflowsFolder;
+                ParseJsonFilesInPath(talkflowFolder, [&](const nlohmann::json& data) {
+                    TalkFlowModLoader.Load(data);
                 });
 
                 auto appearanceFolder = modPath / constants::appearanceFolder;

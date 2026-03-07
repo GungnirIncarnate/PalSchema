@@ -35,6 +35,8 @@ namespace Palworld {
 
 		void AddShop(const RC::Unreal::FName& CharacterId, const nlohmann::json& properties);
 
+		void AddOrEditTalkFlow(const RC::Unreal::FName& CharacterId, const RC::StringType& TalkFlowPath);
+
 		RC::Unreal::UDataTable* m_dataTable = nullptr;
 		RC::Unreal::UDataTable* m_iconDataTable = nullptr;
 		RC::Unreal::UDataTable* m_palBpClassTable = nullptr;

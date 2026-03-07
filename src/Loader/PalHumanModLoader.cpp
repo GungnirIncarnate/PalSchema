@@ -104,6 +104,16 @@ namespace Palworld {
 			{
 				AddShop(CharacterId, value);
 			}
+			else if (key == "TalkFlowAssetPath")
+			{
+				if (!value.is_string())
+				{
+					throw std::runtime_error("TalkFlowAssetPath must be a string.");
+				}
+
+				auto TalkFlowPath = RC::to_generic_string(value.get<std::string>());
+				AddOrEditTalkFlow(CharacterId, TalkFlowPath);
+			}
 			else
 			{
                 auto KeyName = RC::to_generic_string(key);
@@ -153,6 +163,16 @@ namespace Palworld {
             {
 				AddLoot(CharacterId, value);
             }
+			else if (key == "TalkFlowAssetPath")
+			{
+				if (!value.is_string())
+				{
+					throw std::runtime_error("TalkFlowAssetPath must be a string.");
+				}
+
+				auto TalkFlowPath = RC::to_generic_string(value.get<std::string>());
+				AddOrEditTalkFlow(CharacterId, TalkFlowPath);
+			}
 			else
 			{
                 auto KeyName = RC::to_generic_string(key);
@@ -522,5 +542,27 @@ namespace Palworld {
 		} else {
 			PS::Log<RC::LogLevel::Error>(STR("Failed to fully add shop for {} (ShopTableId: {}) - some parts were not added correctly.\n"), CharacterId.ToString(), ShopTableId);
 		}
+	}
+
+	void PalHumanModLoader::AddOrEditTalkFlow(const RC::Unreal::FName& CharacterId, const RC::StringType& TalkFlowPath)
+	{
+		if (!m_npcTalkFlowTable)
+		{
+			PS::Log<RC::LogLevel::Warning>(STR("npcTalkFlowTable not found, skipping talk flow assignment for {}\n"), CharacterId.ToString());
+			return;
+		}
+
+		auto ExistingRow = std::bit_cast<FPalNPCTalkFlowClassDataRow*>(m_npcTalkFlowTable->FindRowUnchecked(CharacterId));
+		if (ExistingRow)
+		{
+			ExistingRow->NPCTalkFlowClass = UECustom::TSoftClassPtr<UClass>(UECustom::FSoftObjectPath(TalkFlowPath));
+		}
+		else
+		{
+			FPalNPCTalkFlowClassDataRow NpcTalkFlowClassDataRow{ TalkFlowPath };
+			m_npcTalkFlowTable->AddRow(CharacterId, NpcTalkFlowClassDataRow);
+		}
+
+		PS::Log<RC::LogLevel::Normal>(STR("Assigned talk flow {} to {}\n"), TalkFlowPath, CharacterId.ToString());
 	}
 }
