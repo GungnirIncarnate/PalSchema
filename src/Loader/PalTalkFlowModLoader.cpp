@@ -11,6 +11,8 @@
 #include <cctype>
 #include <cstdint>
 #include <format>
+#include <optional>
+#include <stdexcept>
 #include <unordered_map>
 #include <vector>
 
@@ -186,12 +188,132 @@ namespace Palworld {
 
             return normalized;
         }
+
+        int ExtractTrailingNumber(const std::string& text)
+        {
+            if (text.empty() || !std::isdigit(static_cast<unsigned char>(text.back())))
+            {
+                return -1;
+            }
+
+            auto split = text.size();
+            while (split > 0 && std::isdigit(static_cast<unsigned char>(text[split - 1])))
+            {
+                --split;
+            }
+
+            return std::stoi(text.substr(split));
+        }
+
+        void SortNodeNamesBySuffix(std::vector<std::string>& names)
+        {
+            std::sort(names.begin(), names.end(), [](const std::string& lhs, const std::string& rhs)
+            {
+                const auto lhsNum = ExtractTrailingNumber(lhs);
+                const auto rhsNum = ExtractTrailingNumber(rhs);
+                if (lhsNum != rhsNum)
+                {
+                    return lhsNum < rhsNum;
+                }
+
+                return lhs < rhs;
+            });
+        }
+
+        std::string SanitizeToken(std::string value)
+        {
+            for (auto& c : value)
+            {
+                if (!std::isalnum(static_cast<unsigned char>(c)))
+                {
+                    c = '_';
+                }
+                else
+                {
+                    c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+                }
+            }
+
+            return value;
+        }
+
+        std::string ExtractPackageAssetName(const RC::StringType& assetPath)
+        {
+            auto packagePart = assetPath;
+            const auto dot = packagePart.find_last_of('.');
+            if (dot != RC::StringType::npos)
+            {
+                packagePart = packagePart.substr(0, dot);
+            }
+
+            const auto slash = packagePart.find_last_of('/');
+            if (slash != RC::StringType::npos && slash + 1 < packagePart.size())
+            {
+                packagePart = packagePart.substr(slash + 1);
+            }
+
+            return RC::to_string(packagePart);
+        }
+
+        nlohmann::json BuildGuidJsonFromNode(RC::Unreal::UObject* nodeObject)
+        {
+            struct GuidMemory { uint32_t A; uint32_t B; uint32_t C; uint32_t D; };
+
+            auto* guid = Palworld::PropertyHelper::GetValuePtrByPropertyNameInChain<GuidMemory>(nodeObject, STR("NodeGuid"));
+            if (!guid)
+            {
+                throw std::runtime_error(std::format("Node '{}' does not expose NodeGuid.", RC::to_string(nodeObject->GetName())));
+            }
+
+            auto guidJson = nlohmann::json::object();
+            guidJson["A"] = static_cast<uint64_t>(guid->A);
+            guidJson["B"] = static_cast<uint64_t>(guid->B);
+            guidJson["C"] = static_cast<uint64_t>(guid->C);
+            guidJson["D"] = static_cast<uint64_t>(guid->D);
+            return guidJson;
+        }
+
+        void ResolveConnectionNodeNames(
+            nlohmann::json& nodePatch,
+            const std::unordered_map<std::string, RC::Unreal::UObject*>& nodesByName)
+        {
+            if (!nodePatch.is_object() || !nodePatch.contains("Connections") || !nodePatch.at("Connections").is_array())
+            {
+                return;
+            }
+
+            for (auto& connectionEntry : nodePatch.at("Connections"))
+            {
+                if (!connectionEntry.is_object() || !connectionEntry.contains("Value") || !connectionEntry.at("Value").is_object())
+                {
+                    continue;
+                }
+
+                auto& value = connectionEntry["Value"];
+                if (!value.contains("NodeName") || !value.at("NodeName").is_string())
+                {
+                    continue;
+                }
+
+                const auto nodeName = value.at("NodeName").get<std::string>();
+                auto nodeIt = nodesByName.find(nodeName);
+                if (nodeIt == nodesByName.end())
+                {
+                    throw std::runtime_error(std::format(
+                        "Connection target NodeName '{}' was not found in flow asset.",
+                        nodeName
+                    ));
+                }
+
+                value["NodeGuid"] = BuildGuidJsonFromNode(nodeIt->second);
+                value.erase("NodeName");
+            }
+        }
     }
 
     namespace constants {
-        constexpr const TCHAR* defaultTalkFlowAssetPath = STR("/Game/Pal/Blueprint/FlowGraph/NPCTalkFlow/Graph/FABP_CommonBountyTrader.FABP_CommonBountyTrader");
+        constexpr const TCHAR* cloneSourceTalkFlowAssetPath = STR("/Game/Pal/Blueprint/FlowGraph/NPCTalkFlow/Graph/FABP_CommonItemShop.FABP_CommonItemShop");
         constexpr const TCHAR* vanillaAssetPrefix = STR("/Game/Pal/");
-        constexpr bool defaultUseClone = true;
     }
 
     PalTalkFlowModLoader::PalTalkFlowModLoader() : PalModLoaderBase("talkflows") {}
@@ -205,6 +327,9 @@ namespace Palworld {
 
         m_npcTalkFlowTable = UObjectGlobals::StaticFindObject<UDataTable*>(nullptr, nullptr,
             STR("/Game/Pal/Blueprint/Component/NPCTalk/DT_NPCTalkFlow.DT_NPCTalkFlow"));
+
+        m_humanParamTable = UObjectGlobals::StaticFindObject<UDataTable*>(nullptr, nullptr,
+            STR("/Game/Pal/DataTable/Character/DT_PalHumanParameter.DT_PalHumanParameter"));
 
         m_npcTalkTextTable = UObjectGlobals::StaticFindObject<UDataTable*>(nullptr, nullptr,
             STR("/Game/Pal/DataTable/Text/DT_NpcTalkText.DT_NpcTalkText"));
@@ -235,51 +360,72 @@ namespace Palworld {
             }
 
             bool didWork = false;
-            auto useClone = constants::defaultUseClone;
+            constexpr bool useClone = true;
             RC::StringType resolvedTalkFlowPath{};
 
             if (RowData.is_string())
             {
-                auto TalkFlowPath = RC::to_generic_string(RowData.get<std::string>());
-                resolvedTalkFlowPath = AssignTalkFlowToNpcWithCloneOption(RC::to_generic_string(CharacterIdString), TalkFlowPath, useClone);
+                PS::Log<LogLevel::Warning>(
+                    STR("String talkflow path for {} is deprecated and ignored. Using hardcoded clone source {}.\n"),
+                    RC::to_generic_string(CharacterIdString),
+                    constants::cloneSourceTalkFlowAssetPath
+                );
+
+                resolvedTalkFlowPath = AssignTalkFlowToNpcWithCloneOption(
+                    RC::to_generic_string(CharacterIdString),
+                    constants::cloneSourceTalkFlowAssetPath,
+                    useClone
+                );
                 didWork = true;
             }
             else if (RowData.is_object())
             {
                 if (RowData.contains("UseClone"))
                 {
-                    if (!RowData.at("UseClone").is_boolean())
-                    {
-                        throw std::runtime_error(std::format("UseClone for '{}' must be a boolean.", CharacterIdString));
-                    }
-
-                    useClone = RowData.at("UseClone").get<bool>();
+                    PS::Log<LogLevel::Warning>(
+                        STR("UseClone is deprecated and ignored for {}. Cloning is always enabled.\n"),
+                        RC::to_generic_string(CharacterIdString)
+                    );
                 }
 
                 if (RowData.contains("TalkFlowAssetPath"))
                 {
-                    if (!RowData.at("TalkFlowAssetPath").is_string())
+                    PS::Log<LogLevel::Warning>(
+                        STR("TalkFlowAssetPath for {} is deprecated and ignored. Using hardcoded clone source {}.\n"),
+                        RC::to_generic_string(CharacterIdString),
+                        constants::cloneSourceTalkFlowAssetPath
+                    );
+
+                    resolvedTalkFlowPath = AssignTalkFlowToNpcWithCloneOption(
+                        RC::to_generic_string(CharacterIdString),
+                        constants::cloneSourceTalkFlowAssetPath,
+                        useClone
+                    );
+                    didWork = true;
+                }
+
+                std::optional<std::string> preferredStartNode;
+                if (RowData.contains("StartNode"))
+                {
+                    if (!RowData.at("StartNode").is_string())
                     {
-                        throw std::runtime_error(std::format("TalkFlowAssetPath for '{}' must be a string.", CharacterIdString));
+                        throw std::runtime_error(std::format("StartNode for '{}' must be a string node id.", CharacterIdString));
                     }
 
-                    auto TalkFlowPath = RC::to_generic_string(RowData.at("TalkFlowAssetPath").get<std::string>());
-                    resolvedTalkFlowPath = AssignTalkFlowToNpcWithCloneOption(RC::to_generic_string(CharacterIdString), TalkFlowPath, useClone);
-                    didWork = true;
+                    preferredStartNode = RowData.at("StartNode").get<std::string>();
                 }
 
                 if (!RowData.contains("TalkFlowAssetPath") && (RowData.contains("Text") || RowData.contains("Buttons")))
                 {
                     resolvedTalkFlowPath = AssignTalkFlowToNpcWithCloneOption(
                         RC::to_generic_string(CharacterIdString),
-                        constants::defaultTalkFlowAssetPath,
+                        constants::cloneSourceTalkFlowAssetPath,
                         useClone
                     );
                     PS::Log<LogLevel::Normal>(
-                        STR("TalkFlowAssetPath not provided for {}. Using default base flow {} (UseClone={})\n"),
+                        STR("TalkFlowAssetPath omitted for {}. Using hardcoded clone source {}\n"),
                         RC::to_generic_string(CharacterIdString),
-                        constants::defaultTalkFlowAssetPath,
-                        useClone
+                        constants::cloneSourceTalkFlowAssetPath
                     );
                     didWork = true;
                 }
@@ -317,12 +463,14 @@ namespace Palworld {
                     {
                         resolvedTalkFlowPath = AssignTalkFlowToNpcWithCloneOption(
                             RC::to_generic_string(CharacterIdString),
-                            constants::defaultTalkFlowAssetPath,
+                            constants::cloneSourceTalkFlowAssetPath,
                             useClone
                         );
                     }
 
-                    if (useClone && resolvedTalkFlowPath.rfind(constants::vanillaAssetPrefix, 0) == 0)
+                    const auto isVanillaNamespace = resolvedTalkFlowPath.rfind(constants::vanillaAssetPrefix, 0) == 0;
+                    const auto looksLikeClonePath = resolvedTalkFlowPath.find(STR("TFClone_")) != RC::StringType::npos;
+                    if (isVanillaNamespace && !looksLikeClonePath)
                     {
                         throw std::runtime_error(std::format(
                             "Failed to isolate talkflow for '{}'. Clone resolution returned vanilla path '{}'. "
@@ -332,9 +480,29 @@ namespace Palworld {
                         ));
                     }
 
-                    auto perNpcPatch = nlohmann::json::object();
-                    perNpcPatch["AssetPath"] = RC::to_string(resolvedTalkFlowPath);
-                    perNpcPatch["Nodes"] = RowData.at("Nodes");
+                    const auto& nodesPayload = RowData.at("Nodes");
+
+                    nlohmann::json perNpcPatch;
+                    if (IsConversationNodeSchema(nodesPayload))
+                    {
+                        perNpcPatch = BuildConversationPatchFromSchema(CharacterIdString, nodesPayload, resolvedTalkFlowPath, preferredStartNode);
+                        if (perNpcPatch.contains("Text"))
+                        {
+                            AddOrEditTalkText(perNpcPatch.at("Text"));
+                        }
+
+                        if (perNpcPatch.contains("Buttons"))
+                        {
+                            AddOrEditTalkText(perNpcPatch.at("Buttons"));
+                        }
+                    }
+                    else
+                    {
+                        perNpcPatch = nlohmann::json::object();
+                        perNpcPatch["AssetPath"] = RC::to_string(resolvedTalkFlowPath);
+                        perNpcPatch["Nodes"] = nodesPayload;
+                    }
+
                     if (!ApplySingleFlowPatch(perNpcPatch, true))
                     {
                         QueueFlowPatchRetry(perNpcPatch, true);
@@ -487,7 +655,878 @@ namespace Palworld {
             m_npcTalkFlowTable->AddRow(CharacterId, NewRow);
         }
 
+        if (m_humanParamTable)
+        {
+            auto* humanRow = m_humanParamTable->FindRowUnchecked(CharacterId);
+            if (humanRow)
+            {
+                auto* rowStruct = m_humanParamTable->GetRowStruct().Get();
+                if (rowStruct)
+                {
+                    const std::array<RC::StringType, 4> candidateProps{
+                        STR("SoftTalkFlowAsset"),
+                        STR("TalkFlowAsset"),
+                        STR("NPCTalkFlowClass"),
+                        STR("TalkFlowClass")
+                    };
+
+                    bool updatedHumanRow = false;
+                    for (const auto& propName : candidateProps)
+                    {
+                        auto* prop = rowStruct->GetPropertyByName(propName.c_str());
+                        if (!prop)
+                        {
+                            continue;
+                        }
+
+                        Palworld::PropertyHelper::CopyJsonValueToContainer(humanRow, prop, RC::to_string(TalkFlowPath));
+                        PS::Log<LogLevel::Normal>(
+                            STR("Assigned talkflow {} to DT_PalHumanParameter[{}].{}\n"),
+                            TalkFlowPath,
+                            CharacterId.ToString(),
+                            propName
+                        );
+                        updatedHumanRow = true;
+                        break;
+                    }
+
+                    if (!updatedHumanRow)
+                    {
+                        PS::Log<LogLevel::Warning>(
+                            STR("No talkflow property found on DT_PalHumanParameter row {} while assigning {}\n"),
+                            CharacterId.ToString(),
+                            TalkFlowPath
+                        );
+                    }
+                }
+            }
+        }
+
         PS::Log<LogLevel::Normal>(STR("Assigned talkflow {} to NPC {}\n"), TalkFlowPath, CharacterId.ToString());
+    }
+
+    bool PalTalkFlowModLoader::IsConversationNodeSchema(const nlohmann::json& Nodes) const
+    {
+        if (!Nodes.is_object() || Nodes.empty())
+        {
+            return false;
+        }
+
+        for (const auto& [nodeId, nodeDef] : Nodes.items())
+        {
+            if (!nodeDef.is_object())
+            {
+                return false;
+            }
+
+            const auto nodeType = nodeDef.value("Type", std::string{});
+            const auto isShopNodeType = (nodeType == "ItemShopBuy" || nodeType == "ItemShopSell");
+
+            if (isShopNodeType)
+            {
+                // Shop terminal nodes intentionally don't require Msg/Buttons.
+                continue;
+            }
+
+            if (!nodeDef.contains("Msg") || !nodeDef.at("Msg").is_string())
+            {
+                return false;
+            }
+
+            // Valid forms for a conversation node's continuation:
+            //   "Buttons": { ... }          — choice or single-button node (validated below)
+            //   "LinkID": "OtherNode"       — node-level auto-chain (no button UI)
+            //   (neither)                    — terminal node, conversation ends after message
+            const auto hasButtons = nodeDef.contains("Buttons") && nodeDef.at("Buttons").is_object();
+
+            if (hasButtons)
+            {
+                for (const auto& [buttonKey, buttonDef] : nodeDef.at("Buttons").items())
+                {
+                    if (!buttonDef.is_object())
+                    {
+                        return false;
+                    }
+
+                    if (!buttonDef.contains("Text") || !buttonDef.at("Text").is_string())
+                    {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        return true;
+    }
+
+    nlohmann::json PalTalkFlowModLoader::BuildConversationPatchFromSchema(
+        const std::string& OwnerId,
+        const nlohmann::json& ConversationNodes,
+        const RC::StringType& AssetPath,
+        const std::optional<std::string>& PreferredStartNode)
+    {
+        auto* flowAsset = FindTalkFlowAsset(AssetPath);
+        if (!flowAsset)
+        {
+            throw std::runtime_error(std::format(
+                "Unable to compile conversation schema for '{}' because flow asset '{}' is not loaded.",
+                OwnerId,
+                RC::to_string(AssetPath)
+            ));
+        }
+
+        TArray<UObject*> flowNodeObjects;
+        UECustom::UObjectGlobals::GetObjectsOfClass(m_flowNodeClass, flowNodeObjects, true, EObjectFlags::RF_ClassDefaultObject, EInternalObjectFlags::None);
+
+        std::unordered_map<std::string, UObject*> nodesByName;
+        std::vector<std::string> startNodes;
+        std::vector<std::string> messageNodes;
+        std::vector<std::string> choiceNodes;
+        std::vector<std::string> openItemShopNodes;
+        std::vector<std::string> openItemShopBuyNodes;
+        std::vector<std::string> openItemShopSellNodes;
+
+        auto classifyOpenShopNode = [&](UObject* nodeObject, const std::string& nodeName)
+        {
+            openItemShopNodes.push_back(nodeName);
+
+            // Empirical mapping:
+            // - default/0 tab => buy shop
+            // - 1 tab         => sell shop
+            int32_t tabValue = 0;
+            bool hasTabValue = false;
+
+            if (auto* tabPtr8 = Palworld::PropertyHelper::GetValuePtrByPropertyNameInChain<uint8_t>(nodeObject, STR("OpenItemShopTabType")))
+            {
+                tabValue = static_cast<int32_t>(*tabPtr8);
+                hasTabValue = true;
+            }
+            else if (auto* tabPtr32 = Palworld::PropertyHelper::GetValuePtrByPropertyNameInChain<int32_t>(nodeObject, STR("OpenItemShopTabType")))
+            {
+                tabValue = *tabPtr32;
+                hasTabValue = true;
+            }
+
+            if (hasTabValue && tabValue == 1)
+            {
+                openItemShopSellNodes.push_back(nodeName);
+            }
+            else
+            {
+                openItemShopBuyNodes.push_back(nodeName);
+            }
+        };
+
+        auto classifyNode = [&](UObject* nodeObject)
+        {
+            const auto nodeName = RC::to_string(nodeObject->GetName());
+            nodesByName.emplace(nodeName, nodeObject);
+
+            const auto className = nodeObject->GetClassPrivate() ? RC::to_string(nodeObject->GetClassPrivate()->GetName()) : std::string{};
+            const auto hasMsgIdList = nodeObject->GetPropertyByNameInChain(STR("MsgIdList")) != nullptr;
+            const auto hasChoiceMsgIdList = nodeObject->GetPropertyByNameInChain(STR("ChoiceMsgIDList")) != nullptr;
+            const auto hasOpenItemShopTabType = nodeObject->GetPropertyByNameInChain(STR("OpenItemShopTabType")) != nullptr;
+
+            if (className.contains("FlowNode_Start") || nodeName.starts_with("FlowNode_Start"))
+            {
+                startNodes.push_back(nodeName);
+            }
+            else if (className.contains("FNBP_NPCTalk_FixedMsdId_C") || hasMsgIdList)
+            {
+                messageNodes.push_back(nodeName);
+            }
+            else if (className.contains("FNBP_NPCTalk_CustomChoice_C") || hasChoiceMsgIdList)
+            {
+                choiceNodes.push_back(nodeName);
+            }
+            else if (className.contains("FNBP_OpenItemShop_C") || hasOpenItemShopTabType)
+            {
+                classifyOpenShopNode(nodeObject, nodeName);
+            }
+        };
+
+        for (auto* nodeObject : flowNodeObjects)
+        {
+            if (!nodeObject || nodeObject->GetOuterPrivate() != flowAsset)
+            {
+                continue;
+            }
+
+            classifyNode(nodeObject);
+        }
+
+        if (nodesByName.empty())
+        {
+            const auto sourceOuterName = ExtractPackageAssetName(AssetPath);
+            for (auto* nodeObject : flowNodeObjects)
+            {
+                if (!nodeObject)
+                {
+                    continue;
+                }
+
+                auto* outer = nodeObject->GetOuterPrivate();
+                if (!outer)
+                {
+                    continue;
+                }
+
+                if (RC::to_string(outer->GetName()) != sourceOuterName)
+                {
+                    continue;
+                }
+
+                classifyNode(nodeObject);
+            }
+
+            if (!nodesByName.empty())
+            {
+                PS::Log<LogLevel::Warning>(
+                    STR("Conversation schema fallback: clone '{}' has no owned nodes; using source graph nodes from '{}' for patching.\n"),
+                    AssetPath,
+                    RC::to_generic_string(sourceOuterName)
+                );
+            }
+        }
+
+        SortNodeNamesBySuffix(startNodes);
+        SortNodeNamesBySuffix(messageNodes);
+        SortNodeNamesBySuffix(choiceNodes);
+        SortNodeNamesBySuffix(openItemShopNodes);
+        SortNodeNamesBySuffix(openItemShopBuyNodes);
+        SortNodeNamesBySuffix(openItemShopSellNodes);
+
+        // Pre-analysis: determine required node counts from JSON (respecting optional "Type" field)
+        // and spawn any shortfall directly into the clone before the capacity checks run.
+        {
+            size_t neededMessageNodes = 0;
+            size_t neededChoiceNodes = 0;
+            size_t neededBuyShopNodes = 0;
+            size_t neededSellShopNodes = 0;
+            bool willNeedExitSpare = false;
+
+            for (const auto& [logicalId, nodeDef] : ConversationNodes.items())
+            {
+                const auto typeStr = nodeDef.value("Type", std::string{});
+                if (typeStr == "ItemShopBuy")
+                {
+                    ++neededBuyShopNodes;
+                    continue;
+                }
+
+                if (typeStr == "ItemShopSell")
+                {
+                    ++neededSellShopNodes;
+                    continue;
+                }
+
+                ++neededMessageNodes;
+
+                const auto hasButtons = nodeDef.contains("Buttons") && nodeDef.at("Buttons").is_object();
+                const auto buttonCount = hasButtons ? nodeDef.at("Buttons").size() : 0;
+                bool needsChoice = buttonCount > 1;
+                if (!typeStr.empty())
+                {
+                    if (typeStr == "CustomChoice") needsChoice = true;
+                    else if (typeStr == "FixedMessage") needsChoice = false;
+                    else throw std::runtime_error(std::format(
+                        "Conversation '{}': node '{}' has unknown Type '{}'. Supported: FixedMessage, CustomChoice, ItemShopBuy, ItemShopSell.",
+                        OwnerId, logicalId, typeStr));
+                }
+                if (needsChoice) ++neededChoiceNodes;
+                if (hasButtons)
+                {
+                    for (const auto& [btnId, btnDef] : nodeDef.at("Buttons").items())
+                    {
+                        const auto explicitExit = btnDef.contains("Action") && btnDef.at("Action").is_string() && btnDef.at("Action").get<std::string>() == "Exit";
+                        const auto implicitExit = !btnDef.contains("LinkID") && !btnDef.contains("Action");
+                        if (explicitExit || implicitExit)
+                            willNeedExitSpare = true;
+                    }
+                }
+            }
+
+            if (willNeedExitSpare) ++neededMessageNodes;
+
+            int spawnIdx = 0;
+            while (messageNodes.size() < neededMessageNodes)
+            {
+                const auto newName = std::format("FNBP_NPCTalk_FixedMsdId_C_Spawned_{}", spawnIdx++);
+                auto* newNode = m_talkFlowCloneManager.SpawnNodeInClone(flowAsset, "FNBP_NPCTalk_FixedMsdId_C", newName);
+                if (!newNode) break;
+                const auto nodeNameNarrow = RC::to_string(newNode->GetName());
+                messageNodes.push_back(nodeNameNarrow);
+                nodesByName.emplace(nodeNameNarrow, newNode);
+            }
+
+            spawnIdx = 0;
+            while (choiceNodes.size() < neededChoiceNodes)
+            {
+                const auto newName = std::format("FNBP_NPCTalk_CustomChoice_C_Spawned_{}", spawnIdx++);
+                auto* newNode = m_talkFlowCloneManager.SpawnNodeInClone(flowAsset, "FNBP_NPCTalk_CustomChoice_C", newName);
+                if (!newNode) break;
+                const auto nodeNameNarrow = RC::to_string(newNode->GetName());
+                choiceNodes.push_back(nodeNameNarrow);
+                nodesByName.emplace(nodeNameNarrow, newNode);
+            }
+
+            spawnIdx = 0;
+            while (openItemShopBuyNodes.size() < neededBuyShopNodes)
+            {
+                const auto newName = std::format("FNBP_OpenItemShop_C_Buy_Spawned_{}", spawnIdx++);
+                auto* newNode = m_talkFlowCloneManager.SpawnNodeInClone(flowAsset, "FNBP_OpenItemShop_C", newName);
+                if (!newNode) break;
+
+                const auto nodeNameNarrow = RC::to_string(newNode->GetName());
+                openItemShopNodes.push_back(nodeNameNarrow);
+                openItemShopBuyNodes.push_back(nodeNameNarrow);
+                nodesByName.emplace(nodeNameNarrow, newNode);
+            }
+
+            spawnIdx = 0;
+            while (openItemShopSellNodes.size() < neededSellShopNodes)
+            {
+                const auto newName = std::format("FNBP_OpenItemShop_C_Sell_Spawned_{}", spawnIdx++);
+                auto* newNode = m_talkFlowCloneManager.SpawnNodeInClone(flowAsset, "FNBP_OpenItemShop_C", newName);
+                if (!newNode) break;
+
+                const auto nodeNameNarrow = RC::to_string(newNode->GetName());
+                openItemShopNodes.push_back(nodeNameNarrow);
+                openItemShopSellNodes.push_back(nodeNameNarrow);
+                nodesByName.emplace(nodeNameNarrow, newNode);
+            }
+
+            SortNodeNamesBySuffix(openItemShopNodes);
+            SortNodeNamesBySuffix(openItemShopBuyNodes);
+            SortNodeNamesBySuffix(openItemShopSellNodes);
+        }
+
+        const auto hasStartNode = !startNodes.empty();
+        if (!hasStartNode)
+        {
+            PS::Log<LogLevel::Warning>(
+                STR("Conversation schema for '{}' did not find FlowNode_Start in '{}'. Keeping existing start routing.\n"),
+                RC::to_generic_string(OwnerId),
+                AssetPath
+            );
+        }
+
+        size_t nonShopLogicalNodes = 0;
+        for (const auto& [logicalId, nodeDef] : ConversationNodes.items())
+        {
+            const auto typeStr = nodeDef.value("Type", std::string{});
+            if (typeStr != "ItemShopBuy" && typeStr != "ItemShopSell")
+            {
+                ++nonShopLogicalNodes;
+            }
+        }
+
+        if (nonShopLogicalNodes > messageNodes.size())
+        {
+            PS::Log<LogLevel::Warning>(
+                STR("Conversation '{}': not enough fixed-message nodes in '{}' even after spawn attempt ({} needed, {} available).\n"),
+                RC::to_generic_string(OwnerId),
+                AssetPath,
+                nonShopLogicalNodes,
+                messageNodes.size()
+            );
+        }
+
+        const auto ownerToken = SanitizeToken(OwnerId);
+
+        std::vector<std::string> logicalOrder;
+        logicalOrder.reserve(ConversationNodes.size());
+        for (const auto& [logicalId, nodeDef] : ConversationNodes.items())
+        {
+            logicalOrder.push_back(logicalId);
+        }
+
+        auto findNodeIdCaseInsensitive = [&](const std::string& requestedId) -> std::optional<std::string>
+        {
+            if (ConversationNodes.contains(requestedId))
+            {
+                return requestedId;
+            }
+
+            auto loweredRequested = requestedId;
+            std::transform(
+                loweredRequested.begin(),
+                loweredRequested.end(),
+                loweredRequested.begin(),
+                [](unsigned char c) { return static_cast<char>(std::tolower(c)); }
+            );
+
+            for (const auto& [logicalId, nodeDef] : ConversationNodes.items())
+            {
+                auto lowered = logicalId;
+                std::transform(
+                    lowered.begin(),
+                    lowered.end(),
+                    lowered.begin(),
+                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); }
+                );
+
+                if (lowered == loweredRequested)
+                {
+                    return logicalId;
+                }
+            }
+
+            return std::nullopt;
+        };
+
+        // Entry node priority:
+        // 1) explicit StartNode
+        // 2) Greeting (case-insensitive)
+        // 3) existing logical order fallback
+        auto chooseEntryNode = [&]() -> std::optional<std::string>
+        {
+            if (PreferredStartNode.has_value())
+            {
+                auto explicitNode = findNodeIdCaseInsensitive(PreferredStartNode.value());
+                if (!explicitNode.has_value())
+                {
+                    throw std::runtime_error(std::format(
+                        "Conversation '{}': StartNode '{}' does not exist in Nodes.",
+                        OwnerId,
+                        PreferredStartNode.value()
+                    ));
+                }
+
+                return explicitNode;
+            }
+
+            return findNodeIdCaseInsensitive("Greeting");
+        };
+
+        if (auto entryNode = chooseEntryNode(); entryNode.has_value())
+        {
+            auto it = std::find(logicalOrder.begin(), logicalOrder.end(), entryNode.value());
+            if (it != logicalOrder.end() && it != logicalOrder.begin())
+            {
+                std::rotate(logicalOrder.begin(), it, it + 1);
+            }
+        }
+
+        std::unordered_map<std::string, bool> logicalNeedsChoiceNode;
+        std::unordered_map<std::string, std::string> logicalNodeType;
+        size_t requiredChoiceNodes = 0;
+        for (const auto& logicalId : logicalOrder)
+        {
+            const auto& nodeDef = ConversationNodes.at(logicalId);
+            const auto typeStr = nodeDef.value("Type", std::string{});
+            logicalNodeType[logicalId] = typeStr;
+
+            if (typeStr == "ItemShopBuy" || typeStr == "ItemShopSell")
+            {
+                logicalNeedsChoiceNode[logicalId] = false;
+                continue;
+            }
+
+            const auto hasButtons = nodeDef.contains("Buttons") && nodeDef.at("Buttons").is_object();
+            const auto buttonCount = hasButtons ? nodeDef.at("Buttons").size() : 0;
+            bool needsChoice = buttonCount > 1;
+            if (!typeStr.empty())
+            {
+                needsChoice = (typeStr == "CustomChoice");
+            }
+            logicalNeedsChoiceNode[logicalId] = needsChoice;
+            if (needsChoice)
+            {
+                ++requiredChoiceNodes;
+            }
+        }
+
+        if (requiredChoiceNodes > choiceNodes.size())
+        {
+            PS::Log<LogLevel::Warning>(
+                STR("Conversation '{}': not enough choice nodes in '{}' even after spawn attempt ({} needed, {} available).\n"),
+                RC::to_generic_string(OwnerId),
+                AssetPath,
+                requiredChoiceNodes,
+                choiceNodes.size()
+            );
+        }
+
+        std::unordered_map<std::string, std::string> logicalToRuntimeNode;
+        std::unordered_map<std::string, std::string> logicalToMessageNode;
+        std::unordered_map<std::string, std::string> logicalToChoiceNode;
+        std::vector<std::string> mappedBuyShopNodes;
+        std::vector<std::string> mappedSellShopNodes;
+        size_t buyShopNodeIndex = 0;
+        size_t sellShopNodeIndex = 0;
+        size_t choiceNodeIndex = 0;
+        size_t messageNodeIndex = 0;
+        for (size_t i = 0; i < logicalOrder.size(); ++i)
+        {
+            const auto& logicalId = logicalOrder[i];
+            const auto& typeStr = logicalNodeType.at(logicalId);
+
+            if (typeStr == "ItemShopBuy")
+            {
+                if (buyShopNodeIndex < openItemShopBuyNodes.size())
+                {
+                    const auto& nodeName = openItemShopBuyNodes[buyShopNodeIndex++];
+                    logicalToRuntimeNode[logicalId] = nodeName;
+                    mappedBuyShopNodes.push_back(nodeName);
+                }
+                continue;
+            }
+
+            if (typeStr == "ItemShopSell")
+            {
+                if (sellShopNodeIndex < openItemShopSellNodes.size())
+                {
+                    const auto& nodeName = openItemShopSellNodes[sellShopNodeIndex++];
+                    logicalToRuntimeNode[logicalId] = nodeName;
+                    mappedSellShopNodes.push_back(nodeName);
+                }
+                continue;
+            }
+
+            if (messageNodeIndex >= messageNodes.size())
+            {
+                continue;
+            }
+
+            logicalToMessageNode[logicalId] = messageNodes[messageNodeIndex++];
+            logicalToRuntimeNode[logicalId] = logicalToMessageNode[logicalId];
+            if (logicalNeedsChoiceNode[logicalId])
+            {
+                if (choiceNodeIndex < choiceNodes.size())
+                {
+                    logicalToChoiceNode[logicalId] = choiceNodes[choiceNodeIndex++];
+                }
+            }
+        }
+
+        auto patch = nlohmann::json::object();
+        patch["AssetPath"] = RC::to_string(AssetPath);
+        patch["Nodes"] = nlohmann::json::object();
+        patch["Text"] = nlohmann::json::object();
+        patch["Buttons"] = nlohmann::json::object();
+
+        auto& nodePatches = patch["Nodes"];
+        auto& textEntries = patch["Text"];
+        auto& buttonEntries = patch["Buttons"];
+
+        for (const auto& nodeName : mappedBuyShopNodes)
+        {
+            nodePatches[nodeName] = {
+                { "OpenItemShopTabType", "E_PalItemShopTabType::NewEnumerator0" }
+            };
+        }
+
+        for (const auto& nodeName : mappedSellShopNodes)
+        {
+            nodePatches[nodeName] = {
+                { "OpenItemShopTabType", "E_PalItemShopTabType::NewEnumerator1" }
+            };
+        }
+
+        std::optional<std::string> exitNodeName;
+
+        auto resolveButtonTargetNode = [&](const std::string& logicalId, const std::string& buttonId, const nlohmann::json& buttonDef) -> std::optional<std::string>
+        {
+            if (buttonDef.contains("LinkID"))
+            {
+                if (!buttonDef.at("LinkID").is_string())
+                {
+                    throw std::runtime_error(std::format("Conversation '{}': Button '{}' in node '{}' has non-string LinkID.", OwnerId, buttonId, logicalId));
+                }
+
+                const auto targetLogicalId = buttonDef.at("LinkID").get<std::string>();
+                auto targetIt = logicalToRuntimeNode.find(targetLogicalId);
+                if (targetIt == logicalToRuntimeNode.end())
+                {
+                    throw std::runtime_error(std::format(
+                        "Conversation '{}': LinkID '{}' from node '{}' does not exist.",
+                        OwnerId,
+                        targetLogicalId,
+                        logicalId
+                    ));
+                }
+
+                return targetIt->second;
+            }
+
+            if (buttonDef.contains("Action"))
+            {
+                if (!buttonDef.at("Action").is_string())
+                {
+                    throw std::runtime_error(std::format("Conversation '{}': Button '{}' in node '{}' has non-string Action.", OwnerId, buttonId, logicalId));
+                }
+
+                const auto action = buttonDef.at("Action").get<std::string>();
+                if (action == "Shop")
+                {
+                    if (openItemShopBuyNodes.empty() && openItemShopNodes.empty())
+                    {
+                        throw std::runtime_error(std::format(
+                            "Conversation '{}': Action=Shop requested but flow '{}' has no FNBP_OpenItemShop_C node.",
+                            OwnerId,
+                            RC::to_string(AssetPath)
+                        ));
+                    }
+
+                    if (!openItemShopBuyNodes.empty())
+                    {
+                        return openItemShopBuyNodes.front();
+                    }
+
+                    return openItemShopNodes.front();
+                }
+
+                if (action == "Exit")
+                {
+                    if (!exitNodeName.has_value())
+                    {
+                        for (const auto& candidate : messageNodes)
+                        {
+                            const auto isAssignedConversationNode = std::find_if(
+                                logicalToMessageNode.begin(),
+                                logicalToMessageNode.end(),
+                                [&](const auto& entry) { return entry.second == candidate; }
+                            ) != logicalToMessageNode.end();
+
+                            if (!isAssignedConversationNode)
+                            {
+                                exitNodeName = candidate;
+                                break;
+                            }
+                        }
+
+                        if (!exitNodeName.has_value())
+                        {
+                            PS::Log<LogLevel::Warning>(
+                                STR("Conversation '{}': Action=Exit has no spare fixed-message node in '{}'. Leaving this exit path unconnected.\n"),
+                                RC::to_generic_string(OwnerId),
+                                AssetPath
+                            );
+                            return std::nullopt;
+                        }
+
+                        const auto exitMsgId = std::format("{}_EXIT", ownerToken);
+                        textEntries[exitMsgId] = "See you.";
+                        nodePatches[exitNodeName.value()] = {
+                            { "MsgIdList", nlohmann::json::array({ exitMsgId }) }
+                        };
+                    }
+
+                    return exitNodeName.value();
+                }
+
+                throw std::runtime_error(std::format(
+                    "Conversation '{}': unsupported Action '{}' in node '{}'. Supported actions: Shop, Exit.",
+                    OwnerId,
+                    action,
+                    logicalId
+                ));
+            }
+
+            // No LinkID/Action explicitly provided: default to Exit behavior.
+            if (!exitNodeName.has_value())
+            {
+                for (const auto& candidate : messageNodes)
+                {
+                    const auto isAssignedConversationNode = std::find_if(
+                        logicalToMessageNode.begin(),
+                        logicalToMessageNode.end(),
+                        [&](const auto& entry) { return entry.second == candidate; }
+                    ) != logicalToMessageNode.end();
+
+                    if (!isAssignedConversationNode)
+                    {
+                        exitNodeName = candidate;
+                        break;
+                    }
+                }
+
+                if (!exitNodeName.has_value())
+                {
+                    PS::Log<LogLevel::Warning>(
+                        STR("Conversation '{}': implicit Exit for button '{}' in node '{}' has no spare fixed-message node in '{}'. Leaving this exit path unconnected.\n"),
+                        RC::to_generic_string(OwnerId),
+                        RC::to_generic_string(buttonId),
+                        RC::to_generic_string(logicalId),
+                        AssetPath
+                    );
+                    return std::nullopt;
+                }
+
+                const auto exitMsgId = std::format("{}_EXIT", ownerToken);
+                textEntries[exitMsgId] = "See you.";
+                nodePatches[exitNodeName.value()] = {
+                    { "MsgIdList", nlohmann::json::array({ exitMsgId }) }
+                };
+            }
+
+            return exitNodeName.value();
+        };
+
+        for (size_t i = 0; i < logicalOrder.size(); ++i)
+        {
+            const auto& logicalId = logicalOrder[i];
+            const auto& nodeDef = ConversationNodes.at(logicalId);
+            const auto& nodeType = logicalNodeType.at(logicalId);
+
+            if (nodeType == "ItemShopBuy" || nodeType == "ItemShopSell")
+            {
+                // Pure target nodes: their routing is provided by incoming LinkID edges.
+                continue;
+            }
+
+            const auto msgId = std::format("{}_{}_MSG", ownerToken, SanitizeToken(logicalId));
+            textEntries[msgId] = nodeDef.at("Msg").get<std::string>();
+
+            auto messageNodeIt = logicalToMessageNode.find(logicalId);
+            if (messageNodeIt == logicalToMessageNode.end())
+            {
+                PS::Log<LogLevel::Warning>(
+                    STR("Conversation '{}': no message node could be allocated for logical node '{}'.\n"),
+                    RC::to_generic_string(OwnerId),
+                    RC::to_generic_string(logicalId)
+                );
+                continue;
+            }
+
+            const auto& messageNodeName = messageNodeIt->second;
+            const auto needsChoiceNode = logicalNeedsChoiceNode.at(logicalId);
+
+            auto messagePatch = nlohmann::json::object();
+            messagePatch["MsgIdList"] = nlohmann::json::array({ msgId });
+
+            if (!needsChoiceNode)
+            {
+                // Determine the single outgoing connection for this fixed-message node.
+                // Priority: node-level LinkID > single-button > terminal (no connection)
+                std::optional<std::string> targetNodeName;
+                if (nodeDef.contains("LinkID") && nodeDef.at("LinkID").is_string())
+                {
+                    const auto targetLogicalId = nodeDef.at("LinkID").get<std::string>();
+                    auto targetIt = logicalToMessageNode.find(targetLogicalId);
+                    if (targetIt == logicalToMessageNode.end())
+                    {
+                        throw std::runtime_error(std::format(
+                            "Conversation '{}': node-level LinkID '{}' in node '{}' does not exist.",
+                            OwnerId, targetLogicalId, logicalId));
+                    }
+                    targetNodeName = targetIt->second;
+                }
+                else if (nodeDef.contains("Buttons") && nodeDef.at("Buttons").is_object() && !nodeDef.at("Buttons").empty())
+                {
+                    auto buttonIt = nodeDef.at("Buttons").items().begin();
+                    targetNodeName = resolveButtonTargetNode(logicalId, buttonIt.key(), buttonIt.value());
+                }
+                // else: terminal node — message plays and conversation ends, no connection patch
+
+                if (targetNodeName.has_value())
+                {
+                    messagePatch["Connections"] = nlohmann::json::array({
+                        {
+                            { "Key", "Out" },
+                            { "Value", {
+                                { "NodeName", targetNodeName.value() },
+                                { "PinName", "In" }
+                            } }
+                        }
+                    });
+                }
+                nodePatches[messageNodeName] = std::move(messagePatch);
+                continue;
+            }
+
+            auto choiceNodeIt = logicalToChoiceNode.find(logicalId);
+            if (choiceNodeIt == logicalToChoiceNode.end())
+            {
+                PS::Log<LogLevel::Warning>(
+                    STR("Conversation '{}': no choice node could be allocated for logical node '{}'.\n"),
+                    RC::to_generic_string(OwnerId),
+                    RC::to_generic_string(logicalId)
+                );
+                nodePatches[messageNodeName] = std::move(messagePatch);
+                continue;
+            }
+
+            const auto& choiceNodeName = choiceNodeIt->second;
+            messagePatch["Connections"] = nlohmann::json::array({
+                {
+                    { "Key", "Out" },
+                    { "Value", {
+                        { "NodeName", choiceNodeName },
+                        { "PinName", "In" }
+                    } }
+                }
+            });
+            nodePatches[messageNodeName] = std::move(messagePatch);
+
+            auto choicePatch = nlohmann::json::object();
+            choicePatch["ChoiceMsgIDList"] = nlohmann::json::array();
+            choicePatch["OutputPins"] = nlohmann::json::array();
+            choicePatch["Connections"] = nlohmann::json::array();
+
+            for (const auto& [buttonId, buttonDef] : nodeDef.at("Buttons").items())
+            {
+                const auto buttonMsgId = std::format(
+                    "{}_{}_BTN_{}",
+                    ownerToken,
+                    SanitizeToken(logicalId),
+                    SanitizeToken(buttonId)
+                );
+
+                buttonEntries[buttonMsgId] = buttonDef.at("Text").get<std::string>();
+                choicePatch["ChoiceMsgIDList"].push_back(buttonMsgId);
+                choicePatch["OutputPins"].push_back({
+                    { "PinName", buttonMsgId },
+                    { "PinFriendlyName", buttonMsgId },
+                    { "PinToolTip", "" }
+                });
+
+                const auto targetNodeName = resolveButtonTargetNode(logicalId, buttonId, buttonDef);
+                if (targetNodeName.has_value())
+                {
+                    choicePatch["Connections"].push_back({
+                        { "Key", buttonMsgId },
+                        { "Value", {
+                            { "NodeName", targetNodeName.value() },
+                            { "PinName", "In" }
+                        } }
+                    });
+                }
+            }
+
+            nodePatches[choiceNodeName] = std::move(choicePatch);
+        }
+
+        if (hasStartNode)
+        {
+            auto entryIt = logicalToRuntimeNode.find(logicalOrder.front());
+            if (entryIt != logicalToRuntimeNode.end())
+            {
+                const auto& entryMessageNode = entryIt->second;
+                nodePatches[startNodes.front()] = {
+                    { "Connections", nlohmann::json::array({
+                        {
+                            { "Key", "Out" },
+                            { "Value", {
+                                { "NodeName", entryMessageNode },
+                                { "PinName", "In" }
+                            } }
+                        }
+                    }) }
+                };
+            }
+            else
+            {
+                PS::Log<LogLevel::Warning>(
+                    STR("Conversation '{}': unable to resolve runtime entry node for '{}'.\n"),
+                    RC::to_generic_string(OwnerId),
+                    RC::to_generic_string(logicalOrder.front())
+                );
+            }
+        }
+
+        return patch;
     }
 
     void PalTalkFlowModLoader::ApplyFlowPatches(const nlohmann::json& FlowPatches)
@@ -564,32 +1603,87 @@ namespace Palworld {
         std::unordered_map<std::string, UObject*> NodesByName;
         std::unordered_map<std::string, std::vector<UObject*>> NodesByNormalizedName;
         std::unordered_map<std::string, std::vector<UObject*>> NodesByNormalizedClassName;
-        for (auto* NodeObject : FlowNodeObjects)
+
+        auto collectNodesForOuter = [&](UObject* targetOuter)
         {
-            if (!NodeObject) continue;
-            if (NodeObject->GetOuterPrivate() != FlowAsset) continue;
-
-            auto nodeName = NodeObject->GetName();
-            auto nodeNameNarrow = RC::to_string(nodeName);
-            NodesByName.emplace(nodeNameNarrow, NodeObject);
-
-            auto normalizedNodeName = NormalizeNodeName(nodeName);
-            NodesByNormalizedName[RC::to_string(normalizedNodeName)].push_back(NodeObject);
-
-            auto className = NodeObject->GetClassPrivate() ? NodeObject->GetClassPrivate()->GetName() : RC::StringType{};
-            if (!className.empty())
+            for (auto* NodeObject : FlowNodeObjects)
             {
-                auto normalizedClassName = NormalizeNodeName(className);
-                NodesByNormalizedClassName[RC::to_string(normalizedClassName)].push_back(NodeObject);
+                if (!NodeObject) continue;
+                if (NodeObject->GetOuterPrivate() != targetOuter) continue;
+
+                auto nodeName = NodeObject->GetName();
+                auto nodeNameNarrow = RC::to_string(nodeName);
+                NodesByName.emplace(nodeNameNarrow, NodeObject);
+
+                auto normalizedNodeName = NormalizeNodeName(nodeName);
+                NodesByNormalizedName[RC::to_string(normalizedNodeName)].push_back(NodeObject);
+
+                auto className = NodeObject->GetClassPrivate() ? NodeObject->GetClassPrivate()->GetName() : RC::StringType{};
+                if (!className.empty())
+                {
+                    auto normalizedClassName = NormalizeNodeName(className);
+                    NodesByNormalizedClassName[RC::to_string(normalizedClassName)].push_back(NodeObject);
+                }
+            }
+        };
+
+        collectNodesForOuter(FlowAsset);
+
+        if (NodesByName.empty())
+        {
+            const auto sourceOuterName = ExtractPackageAssetName(AssetPath);
+            for (auto* NodeObject : FlowNodeObjects)
+            {
+                if (!NodeObject)
+                {
+                    continue;
+                }
+
+                auto* outer = NodeObject->GetOuterPrivate();
+                if (!outer)
+                {
+                    continue;
+                }
+
+                if (RC::to_string(outer->GetName()) != sourceOuterName)
+                {
+                    continue;
+                }
+
+                auto nodeName = NodeObject->GetName();
+                auto nodeNameNarrow = RC::to_string(nodeName);
+                NodesByName.emplace(nodeNameNarrow, NodeObject);
+
+                auto normalizedNodeName = NormalizeNodeName(nodeName);
+                NodesByNormalizedName[RC::to_string(normalizedNodeName)].push_back(NodeObject);
+
+                auto className = NodeObject->GetClassPrivate() ? NodeObject->GetClassPrivate()->GetName() : RC::StringType{};
+                if (!className.empty())
+                {
+                    auto normalizedClassName = NormalizeNodeName(className);
+                    NodesByNormalizedClassName[RC::to_string(normalizedClassName)].push_back(NodeObject);
+                }
+            }
+
+            if (!NodesByName.empty())
+            {
+                PS::Log<LogLevel::Warning>(
+                    STR("Flow patch fallback: '{}' has no owned nodes; patching source graph nodes from '{}'.\n"),
+                    AssetPath,
+                    RC::to_generic_string(sourceOuterName)
+                );
             }
         }
 
         for (auto& [NodeName, NodePatch] : Patch.at("Nodes").items())
         {
+            auto resolvedNodePatch = NodePatch;
+            ResolveConnectionNodeNames(resolvedNodePatch, NodesByName);
+
             auto NodeIt = NodesByName.find(NodeName);
             if (NodeIt != NodesByName.end())
             {
-                ApplyNodePatch(NodeIt->second, NodePatch);
+                ApplyNodePatch(NodeIt->second, resolvedNodePatch);
                 continue;
             }
 
@@ -609,7 +1703,7 @@ namespace Palworld {
                     );
                 }
 
-                ApplyNodePatch(selectedNode, NodePatch);
+                ApplyNodePatch(selectedNode, resolvedNodePatch);
                 continue;
             }
 
@@ -628,7 +1722,7 @@ namespace Palworld {
                     );
                 }
 
-                ApplyNodePatch(selectedNode, NodePatch);
+                ApplyNodePatch(selectedNode, resolvedNodePatch);
                 continue;
             }
 

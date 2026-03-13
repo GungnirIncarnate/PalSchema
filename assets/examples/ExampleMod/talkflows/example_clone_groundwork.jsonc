@@ -1,15 +1,60 @@
 {
-    // Groundwork schema for upcoming runtime clone system.
-    // UseClone defaults to true in code, but is shown explicitly here.
-    "Novice_PalTimer_3": {
-        "UseClone": true,
-        "TalkFlowAssetPath": "/Game/Pal/Blueprint/FlowGraph/NPCTalkFlow/Graph/FABP_CommonBountyTrader.FABP_CommonBountyTrader",
-        "Text": {
-            "MOD_CLONE_GREETING": "Need something? This line is intended for cloned-flow usage."
-        },
-        "Buttons": {
-            "MOD_CLONE_CHOICE_BUY": "Show me the bounty board.",
-            "MOD_CLONE_CHOICE_EXIT": "Maybe later."
+    // Conversation-schema example.
+    // The loader compiles this into node patches + DT_NpcTalkText rows.
+    //
+    // Node continuation patterns (all optional — pick the one that fits):
+    //
+    //   "Buttons": { "0": { "Text": "...", "LinkID": "NodeId" }, ... }
+    //     Standard choice/single-button node.  Each button needs Text and either
+    //     LinkID (go to another node) or Action ("Shop" / "Exit").
+    //
+    //   "LinkID": "NodeId"    (at the NODE level, no Buttons)
+    //     FixedMessage that auto-chains directly to another node with no button UI.
+    //
+    //   (neither Buttons nor LinkID)
+    //     Terminal node — message plays, then the conversation ends.
+    //
+    // "Type" field (optional):
+    //   "FixedMessage"   — single outgoing connection  (default for 0-1 buttons)
+    //   "CustomChoice"   — choice-list UI attached      (default for 2+ buttons)
+    //   If omitted, inferred from button count.
+    //
+    // Nodes not already present in the source talkflow are automatically spawned
+    // into the clone at load time — no manual node count management required.
+    "Gun_TestNPC": {
+        "StartNode": "Greeting",
+        "Nodes": {
+            "Greeting": {
+                "Type": "CustomChoice",
+                "Msg": "Welcome. Looking for spheres, gems, or materials?",
+                "Buttons": {
+                    "0": {
+                        "Text": "More?",
+                        "LinkID": "Testing"
+                    },
+                    "1": {
+                        "Text": "Talk To Me...",
+                        "LinkID": "Conversation"
+                    },
+                    "2": {
+                        "Text": "Go Away",
+                        "Action": "Exit"
+                    },
+                    "3": {
+                        "Text": "Let's Shop",
+                        "Action": "Shop"
+                    }
+                }
+            },
+            "Conversation": {
+                "Type": "FixedMessage",
+                "Msg": "Just wanna chat huh?",
+                "LinkID": "Testing"
+            },
+            "Testing": {
+                "Type": "FixedMessage",
+                "Msg": "This is a second linked message"
+            }
         }
     }
 }

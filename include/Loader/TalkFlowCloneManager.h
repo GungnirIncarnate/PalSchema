@@ -30,9 +30,25 @@ namespace Palworld {
 
         RC::Unreal::UObject* CreateCloneObject(RC::Unreal::UObject* SourceAsset, const TalkFlowCloneRequest& Request);
 
+        void CloneFlowNodesIntoAsset(RC::Unreal::UObject* SourceAsset, RC::Unreal::UObject* ClonedAsset);
+
+        void RemapFlowNodeMapToClones(
+            RC::Unreal::UObject* SourceAsset,
+            RC::Unreal::UObject* ClonedAsset,
+            const std::unordered_map<std::string, RC::Unreal::UObject*>& ClonedNodesByGuidKey,
+            const std::unordered_map<RC::Unreal::UObject*, RC::Unreal::UObject*>& ClonedNodesBySourceNode);
+
         RC::Unreal::UClass* m_flowNodeClass = nullptr;
         std::unordered_map<std::string, RC::StringType> m_cachedResolvedPaths;
         std::unordered_map<std::string, RC::Unreal::UObject*> m_cachedCloneObjects;
         std::unordered_set<std::string> m_warnedCloneKeys;
+    public:
+        // Spawns a new node of the given Blueprint class name inside CloneAsset, assigns it a
+        // fresh random GUID, and registers it in the asset's Nodes FMap.  Returns the new node
+        // or nullptr if the class or construction failed.
+        RC::Unreal::UObject* SpawnNodeInClone(
+            RC::Unreal::UObject* CloneAsset,
+            const std::string& DesiredClassName,
+            const std::string& DesiredNodeName);
     };
 }

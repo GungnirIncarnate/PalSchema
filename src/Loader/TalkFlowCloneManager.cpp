@@ -1,11 +1,19 @@
 #include "Loader/TalkFlowCloneManager.h"
+#include "SDK/Helper/PropertyHelper.h"
+#include "SDK/Structs/Custom/FScriptMapHelper.h"
 #include "Unreal/UObjectGlobals.hpp"
+#include "Unreal/FProperty.hpp"
+#include "Unreal/Property/FMapProperty.hpp"
+#include "Unreal/Property/FObjectProperty.hpp"
 #include "SDK/Classes/Custom/UObjectGlobals.h"
 #include "SDK/Classes/KismetSystemLibrary.h"
 #include "Utility/Logging.h"
 #include "Helpers/String.hpp"
 #include <cctype>
 #include <algorithm>
+#include <cstring>
+#include <format>
+#include <random>
 #include <vector>
 
 using namespace RC;
@@ -14,6 +22,15 @@ using namespace RC::Unreal;
 namespace Palworld {
     namespace constants {
         constexpr const TCHAR* vanillaAssetPrefix = STR("/Game/Pal/");
+    }
+
+    namespace {
+        struct GuidMemory { uint32_t A; uint32_t B; uint32_t C; uint32_t D; };
+
+        std::string BuildGuidKey(const GuidMemory& guid)
+        {
+            return std::format("{:08X}-{:08X}-{:08X}-{:08X}", guid.A, guid.B, guid.C, guid.D);
+        }
     }
 
     void TalkFlowCloneManager::Initialize(UClass* FlowNodeClass)
@@ -318,8 +335,286 @@ namespace Palworld {
             return nullptr;
         }
 
+        CloneFlowNodesIntoAsset(SourceAsset, clonedObject);
+
         clonedObject->SetRootSet();
 
         return clonedObject;
+    }
+
+    void TalkFlowCloneManager::CloneFlowNodesIntoAsset(UObject* SourceAsset, UObject* ClonedAsset)
+    {
+        if (!SourceAsset || !ClonedAsset || !m_flowNodeClass)
+        {
+            return;
+        }
+
+        TArray<UObject*> flowNodeObjects;
+        UECustom::UObjectGlobals::GetObjectsOfClass(m_flowNodeClass, flowNodeObjects, true, EObjectFlags::RF_ClassDefaultObject, EInternalObjectFlags::None);
+
+        std::unordered_map<std::string, UObject*> clonedNodesByGuidKey;
+        std::unordered_map<UObject*, UObject*> clonedNodesBySourceNode;
+        int32_t clonedNodeCount = 0;
+
+        for (auto* sourceNode : flowNodeObjects)
+        {
+            if (!sourceNode || sourceNode->GetOuterPrivate() != SourceAsset)
+            {
+                continue;
+            }
+
+            FStaticConstructObjectParameters constructParams{ sourceNode->GetClassPrivate(), ClonedAsset };
+            constructParams.Name = FName(sourceNode->GetName(), FNAME_Add);
+            constructParams.SetFlags = EObjectFlags::RF_Transient;
+            constructParams.Template = sourceNode;
+            constructParams.bCopyTransientsFromClassDefaults = true;
+
+            auto* clonedNode = RC::Unreal::UObjectGlobals::StaticConstructObject<UObject*>(constructParams);
+            if (!clonedNode)
+            {
+                continue;
+            }
+
+            clonedNode->SetRootSet();
+            ++clonedNodeCount;
+            clonedNodesBySourceNode.emplace(sourceNode, clonedNode);
+
+            // Index by SOURCE node's GUID so the key matches what is stored in the Nodes FMap,
+            // which was copied from the source before we did any cloning.
+            // Some node classes regenerate their NodeGuid in their constructor, so the
+            // cloned node may carry a different GUID than the source.  Using the source GUID
+            // guarantees a hit in RemapFlowNodeMapToClones.
+            if (auto* sourceGuid = Palworld::PropertyHelper::GetValuePtrByPropertyNameInChain<GuidMemory>(sourceNode, STR("NodeGuid")))
+            {
+                clonedNodesByGuidKey[BuildGuidKey(*sourceGuid)] = clonedNode;
+            }
+
+            // Also register under the cloned node's own GUID as a secondary key (handles
+            // nodes that DO preserve their GUID through construction).
+            if (auto* clonedGuid = Palworld::PropertyHelper::GetValuePtrByPropertyNameInChain<GuidMemory>(clonedNode, STR("NodeGuid")))
+            {
+                auto clonedKey = BuildGuidKey(*clonedGuid);
+                if (!clonedNodesByGuidKey.count(clonedKey))
+                {
+                    clonedNodesByGuidKey[clonedKey] = clonedNode;
+                }
+            }
+        }
+
+        if (!clonedNodesByGuidKey.empty() || !clonedNodesBySourceNode.empty())
+        {
+            RemapFlowNodeMapToClones(SourceAsset, ClonedAsset, clonedNodesByGuidKey, clonedNodesBySourceNode);
+        }
+
+        PS::Log<LogLevel::Normal>(
+            STR("TalkFlow clone node population: source={} clone={} clonedNodes={} remapCandidates={}\n"),
+            SourceAsset->GetPathName(),
+            ClonedAsset->GetPathName(),
+            clonedNodeCount,
+            static_cast<int32_t>(clonedNodesByGuidKey.size())
+        );
+    }
+
+    void TalkFlowCloneManager::RemapFlowNodeMapToClones(
+        UObject* SourceAsset,
+        UObject* ClonedAsset,
+        const std::unordered_map<std::string, UObject*>& ClonedNodesByGuidKey,
+        const std::unordered_map<UObject*, UObject*>& ClonedNodesBySourceNode)
+    {
+        if (!SourceAsset || !ClonedAsset || (ClonedNodesByGuidKey.empty() && ClonedNodesBySourceNode.empty()))
+        {
+            return;
+        }
+
+        auto* sourceNodesProperty = SourceAsset->GetPropertyByNameInChain(STR("Nodes"));
+        auto* sourceMapProperty = Palworld::PropertyHelper::CastProperty<FMapProperty>(sourceNodesProperty);
+        if (!sourceMapProperty)
+        {
+            return;
+        }
+
+        auto* cloneNodesProperty = ClonedAsset->GetPropertyByNameInChain(STR("Nodes"));
+        auto* cloneMapProperty = Palworld::PropertyHelper::CastProperty<FMapProperty>(cloneNodesProperty);
+        if (!cloneMapProperty)
+        {
+            return;
+        }
+
+        auto* sourceValueObjectProperty = Palworld::PropertyHelper::CastProperty<FObjectProperty>(sourceMapProperty->GetValueProp());
+        if (!sourceValueObjectProperty || !Palworld::PropertyHelper::CastProperty<FObjectProperty>(cloneMapProperty->GetValueProp()))
+        {
+            return;
+        }
+
+        auto* sourceMapData = sourceMapProperty->ContainerPtrToValuePtr<void>(SourceAsset);
+        auto* cloneMapData = cloneMapProperty->ContainerPtrToValuePtr<void>(ClonedAsset);
+        if (!sourceMapData || !cloneMapData)
+        {
+            return;
+        }
+
+        UECustom::FScriptMapHelper sourceMapHelper(sourceMapProperty, sourceMapData);
+        UECustom::FScriptMapHelper cloneMapHelper(cloneMapProperty, cloneMapData);
+
+        int32_t sourceEntries = 0;
+        int32_t remappedCount = 0;
+        int32_t unresolvedEntries = 0;
+
+        sourceMapHelper.ForEachPair([&](void* sourceKeyPtr, void* sourceValuePtr)
+        {
+            if (!sourceKeyPtr || !sourceValuePtr)
+            {
+                return;
+            }
+
+            ++sourceEntries;
+
+            auto* sourceNodeSlot = sourceValueObjectProperty->ContainerPtrToValuePtr<UObject*>(sourceValuePtr);
+            if (!sourceNodeSlot)
+            {
+                ++unresolvedEntries;
+                return;
+            }
+
+            UObject* replacementNode = nullptr;
+
+            GuidMemory keyGuid{};
+            std::memcpy(&keyGuid, sourceKeyPtr, sizeof(GuidMemory));
+
+            auto guidKey = BuildGuidKey(keyGuid);
+            auto cloneIt = ClonedNodesByGuidKey.find(guidKey);
+            if (cloneIt != ClonedNodesByGuidKey.end())
+            {
+                replacementNode = cloneIt->second;
+            }
+            else if (*sourceNodeSlot)
+            {
+                auto sourceIt = ClonedNodesBySourceNode.find(*sourceNodeSlot);
+                if (sourceIt != ClonedNodesBySourceNode.end())
+                {
+                    replacementNode = sourceIt->second;
+                }
+            }
+
+            if (!replacementNode)
+            {
+                ++unresolvedEntries;
+                return;
+            }
+
+            UObject* replacementSlot = replacementNode;
+            if (cloneMapHelper.SetValueByKey(sourceKeyPtr, &replacementSlot, true))
+            {
+                ++remappedCount;
+            }
+        });
+
+        if (unresolvedEntries > 0)
+        {
+            PS::Log<LogLevel::Warning>(
+                STR("TalkFlow clone node remap unresolved entries: asset={} unresolved={} sourceEntries={}\n"),
+                ClonedAsset->GetPathName(),
+                unresolvedEntries,
+                sourceEntries
+            );
+        }
+
+        PS::Log<LogLevel::Normal>(
+            STR("TalkFlow clone node remap: asset={} remappedNodes={} sourceEntries={}\n"),
+            ClonedAsset->GetPathName(),
+            remappedCount,
+            sourceEntries
+        );
+    }
+
+    UObject* TalkFlowCloneManager::SpawnNodeInClone(
+        UObject* CloneAsset,
+        const std::string& DesiredClassName,
+        const std::string& DesiredNodeName)
+    {
+        if (!CloneAsset || !m_flowNodeClass)
+        {
+            return nullptr;
+        }
+
+        // Find the UClass* for DesiredClassName by scanning existing flow node instances.
+        UClass* targetClass = nullptr;
+        TArray<UObject*> flowNodeObjects;
+        UECustom::UObjectGlobals::GetObjectsOfClass(m_flowNodeClass, flowNodeObjects, true, EObjectFlags::RF_ClassDefaultObject, EInternalObjectFlags::None);
+
+        for (auto* obj : flowNodeObjects)
+        {
+            if (!obj) continue;
+            auto* cls = obj->GetClassPrivate();
+            if (!cls) continue;
+            if (RC::to_string(cls->GetName()) == DesiredClassName)
+            {
+                targetClass = static_cast<UClass*>(cls);
+                break;
+            }
+        }
+
+        if (!targetClass)
+        {
+            PS::Log<LogLevel::Warning>(
+                STR("SpawnNodeInClone: class '{}' not found among loaded flow nodes for clone '{}'\n"),
+                RC::to_generic_string(DesiredClassName),
+                CloneAsset->GetName()
+            );
+            return nullptr;
+        }
+
+        auto desiredNameW = RC::to_generic_string(DesiredNodeName);
+        FStaticConstructObjectParameters params{ targetClass, CloneAsset };
+        params.Name = FName(desiredNameW, FNAME_Add);
+        params.SetFlags = EObjectFlags::RF_Transient;
+        params.bCopyTransientsFromClassDefaults = true;
+
+        auto* newNode = RC::Unreal::UObjectGlobals::StaticConstructObject<UObject*>(params);
+        if (!newNode)
+        {
+            PS::Log<LogLevel::Warning>(
+                STR("SpawnNodeInClone: StaticConstructObject failed for '{}' ({}) in clone '{}'\n"),
+                RC::to_generic_string(DesiredNodeName),
+                RC::to_generic_string(DesiredClassName),
+                CloneAsset->GetName()
+            );
+            return nullptr;
+        }
+
+        newNode->SetRootSet();
+
+        // Assign a fresh random GUID to this node so it has a unique Nodes map key.
+        static std::mt19937 rng{ std::random_device{}() };
+        static std::uniform_int_distribution<uint32_t> dist;
+        GuidMemory freshGuid{ dist(rng), dist(rng), dist(rng), dist(rng) };
+
+        if (auto* guidProp = Palworld::PropertyHelper::GetValuePtrByPropertyNameInChain<GuidMemory>(newNode, STR("NodeGuid")))
+        {
+            *guidProp = freshGuid;
+        }
+
+        // Register the new node in the clone asset's Nodes FMap using its GUID as key.
+        auto* nodesProperty = CloneAsset->GetPropertyByNameInChain(STR("Nodes"));
+        auto* mapProperty = Palworld::PropertyHelper::CastProperty<FMapProperty>(nodesProperty);
+        if (mapProperty)
+        {
+            auto* mapData = mapProperty->ContainerPtrToValuePtr<void>(CloneAsset);
+            if (mapData)
+            {
+                UECustom::FScriptMapHelper mapHelper(mapProperty, mapData);
+                UObject* nodeSlot = newNode;
+                mapHelper.SetValueByKey(&freshGuid, &nodeSlot, true);
+            }
+        }
+
+        PS::Log<LogLevel::Normal>(
+            STR("SpawnNodeInClone: spawned '{}' ({}) in clone '{}'\n"),
+            RC::to_generic_string(DesiredNodeName),
+            RC::to_generic_string(DesiredClassName),
+            CloneAsset->GetName()
+        );
+
+        return newNode;
     }
 }

@@ -12,7 +12,6 @@
 #include "SDK/Structs/Custom/FManagedStruct.h"
 #include "SDK/Structs/FPalCharacterIconDataRow.h"
 #include "SDK/Structs/FPalBPClassDataRow.h"
-#include "SDK/Structs/FPalNPCTalkFlowClassDataRow.h"
 #include "SDK/Structs/FPalItemShopLotteryDataRow.h"
 #include "SDK/Structs/FPalItemShopSettingDataRow.h"
 #include "Loader/PalHumanModLoader.h"
@@ -47,9 +46,6 @@ namespace Palworld {
 
 		m_palLongDescTable = UObjectGlobals::StaticFindObject<RC::Unreal::UDataTable*>(nullptr, nullptr,
 			STR("/Game/Pal/DataTable/Text/DT_PalLongDescriptionText.DT_PalLongDescriptionText"));
-
-		m_npcTalkFlowTable = UObjectGlobals::StaticFindObject<RC::Unreal::UDataTable*>(nullptr, nullptr,
-			STR("/Game/Pal/Blueprint/Component/NPCTalk/DT_NPCTalkFlow.DT_NPCTalkFlow"));
 
 		m_ItemShopLotteryDataTable = UObjectGlobals::StaticFindObject<RC::Unreal::UDataTable*>(nullptr, nullptr,
 			STR("/Game/Pal/DataTable/ItemShop/DT_ItemShopLotteryData.DT_ItemShopLotteryData"));
@@ -104,16 +100,6 @@ namespace Palworld {
 			{
 				AddShop(CharacterId, value);
 			}
-			else if (key == "TalkFlowAssetPath")
-			{
-				if (!value.is_string())
-				{
-					throw std::runtime_error("TalkFlowAssetPath must be a string.");
-				}
-
-				auto TalkFlowPath = RC::to_generic_string(value.get<std::string>());
-				AddOrEditTalkFlow(CharacterId, TalkFlowPath);
-			}
 			else
 			{
                 auto KeyName = RC::to_generic_string(key);
@@ -163,16 +149,6 @@ namespace Palworld {
             {
 				AddLoot(CharacterId, value);
             }
-			else if (key == "TalkFlowAssetPath")
-			{
-				if (!value.is_string())
-				{
-					throw std::runtime_error("TalkFlowAssetPath must be a string.");
-				}
-
-				auto TalkFlowPath = RC::to_generic_string(value.get<std::string>());
-				AddOrEditTalkFlow(CharacterId, TalkFlowPath);
-			}
 			else
 			{
                 auto KeyName = RC::to_generic_string(key);
@@ -370,10 +346,6 @@ namespace Palworld {
 
 	void PalHumanModLoader::AddShop(const RC::Unreal::FName& CharacterId, const nlohmann::json& Data)
 	{
-		if (!Data.contains("CanSell")) {
-			PS::Log<RC::LogLevel::Error>(STR("CanSell was not specified in {}, skipping shop entry.\n"), CharacterId.ToString());
-			return;
-		}
 		if (!Data.contains("ShopTableId")) {
 			PS::Log<RC::LogLevel::Error>(STR("ShopTableId was not specified in {}, skipping shop entry.\n"), CharacterId.ToString());
 			return;
@@ -384,10 +356,6 @@ namespace Palworld {
 		}
 		if (!Data.contains("Items")) {
 			PS::Log<RC::LogLevel::Error>(STR("Items was not specified in {}, skipping shop entry.\n"), CharacterId.ToString());
-			return;
-		}
-		if (!Data.at("CanSell").is_boolean()) {
-			PS::Log<RC::LogLevel::Error>(STR("CanSell in {} must be a boolean, skipping shop entry.\n"), CharacterId.ToString());
 			return;
 		}
 		if (!Data.at("ShopTableId").is_string()) {
@@ -404,32 +372,6 @@ namespace Palworld {
 		}
 
 		bool addSucceeded = true;
-
-		if (Data.at("CanSell").get<bool>()) {
-			FPalNPCTalkFlowClassDataRow NpcTalkFlowClassDataRow {STR("/Game/Pal/Blueprint/FlowGraph/NPCTalkFlow/Graph/FABP_CommonItemShop.FABP_CommonItemShop")};
-			if (m_npcTalkFlowTable)
-			{
-				m_npcTalkFlowTable->AddRow(CharacterId, NpcTalkFlowClassDataRow);
-				if (!m_npcTalkFlowTable->FindRowUnchecked(CharacterId)) addSucceeded = false;
-			}
-			else
-			{
-				PS::Log<RC::LogLevel::Warning>(STR("npcTalkFlowTable not found, skipping adding talk flow for {}\n"), CharacterId.ToString());
-				addSucceeded = false;
-			}
-		} else {
-			FPalNPCTalkFlowClassDataRow NpcTalkFlowClassDataRow {STR("/Game/Pal/Blueprint/FlowGraph/NPCTalkFlow/Graph/FABP_CommonItemShop_WithoutSell.FABP_CommonItemShop_WithoutSell")};
-			if (m_npcTalkFlowTable)
-			{
-				m_npcTalkFlowTable->AddRow(CharacterId, NpcTalkFlowClassDataRow);
-				if (!m_npcTalkFlowTable->FindRowUnchecked(CharacterId)) addSucceeded = false;
-			}
-			else
-			{
-				PS::Log<RC::LogLevel::Warning>(STR("npcTalkFlowTable not found, skipping adding talk flow for {}\n"), CharacterId.ToString());
-				addSucceeded = false;
-			}
-		}
 
 		auto ShopTableId = RC::to_generic_string(Data.at("ShopTableId").get<std::string>());
 		if (m_ItemShopLotteryDataTable)
@@ -544,25 +486,4 @@ namespace Palworld {
 		}
 	}
 
-	void PalHumanModLoader::AddOrEditTalkFlow(const RC::Unreal::FName& CharacterId, const RC::StringType& TalkFlowPath)
-	{
-		if (!m_npcTalkFlowTable)
-		{
-			PS::Log<RC::LogLevel::Warning>(STR("npcTalkFlowTable not found, skipping talk flow assignment for {}\n"), CharacterId.ToString());
-			return;
-		}
-
-		auto ExistingRow = std::bit_cast<FPalNPCTalkFlowClassDataRow*>(m_npcTalkFlowTable->FindRowUnchecked(CharacterId));
-		if (ExistingRow)
-		{
-			ExistingRow->NPCTalkFlowClass = UECustom::TSoftClassPtr<UClass>(UECustom::FSoftObjectPath(TalkFlowPath));
-		}
-		else
-		{
-			FPalNPCTalkFlowClassDataRow NpcTalkFlowClassDataRow{ TalkFlowPath };
-			m_npcTalkFlowTable->AddRow(CharacterId, NpcTalkFlowClassDataRow);
-		}
-
-		PS::Log<RC::LogLevel::Normal>(STR("Assigned talk flow {} to {}\n"), TalkFlowPath, CharacterId.ToString());
-	}
 }

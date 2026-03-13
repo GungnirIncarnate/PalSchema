@@ -3,6 +3,7 @@
 #include "Loader/PalModLoaderBase.h"
 #include "Loader/TalkFlowCloneManager.h"
 #include "nlohmann/json.hpp"
+#include <optional>
 #include <vector>
 
 namespace RC::Unreal {
@@ -32,6 +33,10 @@ namespace Palworld {
 
         void AssignTalkFlowToNpc(const RC::StringType& CharacterIdString, const RC::StringType& TalkFlowPath);
 
+        bool IsConversationNodeSchema(const nlohmann::json& Nodes) const;
+
+        nlohmann::json BuildConversationPatchFromSchema(const std::string& OwnerId, const nlohmann::json& ConversationNodes, const RC::StringType& AssetPath, const std::optional<std::string>& PreferredStartNode);
+
         void ApplyFlowPatches(const nlohmann::json& FlowPatches);
 
         bool ApplySingleFlowPatch(const nlohmann::json& Patch, bool SkipVanillaGuard = false);
@@ -54,6 +59,7 @@ namespace Palworld {
 
         RC::Unreal::UClass* m_flowNodeClass = nullptr;
         RC::Unreal::UDataTable* m_npcTalkFlowTable = nullptr;
+        RC::Unreal::UDataTable* m_humanParamTable = nullptr;
         RC::Unreal::UDataTable* m_npcTalkTextTable = nullptr;
         TalkFlowCloneManager m_talkFlowCloneManager;
         std::vector<nlohmann::json> m_pendingFlowPatches;
