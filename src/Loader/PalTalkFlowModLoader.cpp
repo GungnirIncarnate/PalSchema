@@ -365,12 +365,6 @@ namespace Palworld {
 
             if (RowData.is_string())
             {
-                PS::Log<LogLevel::Warning>(
-                    STR("String talkflow path for {} is deprecated and ignored. Using hardcoded clone source {}.\n"),
-                    RC::to_generic_string(CharacterIdString),
-                    constants::cloneSourceTalkFlowAssetPath
-                );
-
                 resolvedTalkFlowPath = AssignTalkFlowToNpcWithCloneOption(
                     RC::to_generic_string(CharacterIdString),
                     constants::cloneSourceTalkFlowAssetPath,
@@ -380,22 +374,8 @@ namespace Palworld {
             }
             else if (RowData.is_object())
             {
-                if (RowData.contains("UseClone"))
-                {
-                    PS::Log<LogLevel::Warning>(
-                        STR("UseClone is deprecated and ignored for {}. Cloning is always enabled.\n"),
-                        RC::to_generic_string(CharacterIdString)
-                    );
-                }
-
                 if (RowData.contains("TalkFlowAssetPath"))
                 {
-                    PS::Log<LogLevel::Warning>(
-                        STR("TalkFlowAssetPath for {} is deprecated and ignored. Using hardcoded clone source {}.\n"),
-                        RC::to_generic_string(CharacterIdString),
-                        constants::cloneSourceTalkFlowAssetPath
-                    );
-
                     resolvedTalkFlowPath = AssignTalkFlowToNpcWithCloneOption(
                         RC::to_generic_string(CharacterIdString),
                         constants::cloneSourceTalkFlowAssetPath,
@@ -421,11 +401,6 @@ namespace Palworld {
                         RC::to_generic_string(CharacterIdString),
                         constants::cloneSourceTalkFlowAssetPath,
                         useClone
-                    );
-                    PS::Log<LogLevel::Normal>(
-                        STR("TalkFlowAssetPath omitted for {}. Using hardcoded clone source {}\n"),
-                        RC::to_generic_string(CharacterIdString),
-                        constants::cloneSourceTalkFlowAssetPath
                     );
                     didWork = true;
                 }
@@ -507,6 +482,13 @@ namespace Palworld {
                     {
                         QueueFlowPatchRetry(perNpcPatch, true);
                     }
+                    else
+                    {
+                        PS::Log<LogLevel::Normal>(
+                            STR("Applied talkflow patch for NPC {}\n"),
+                            RC::to_generic_string(CharacterIdString)
+                        );
+                    }
                     didWork = true;
                 }
             }
@@ -561,11 +543,6 @@ namespace Palworld {
                     if (resolvedTalkFlowPath != it->SourceAssetPath)
                     {
                         AssignTalkFlowToNpc(it->CharacterId, resolvedTalkFlowPath);
-                        PS::Log<LogLevel::Normal>(
-                            STR("Resolved deferred TalkFlow clone for {} -> {}\n"),
-                            it->CharacterId,
-                            resolvedTalkFlowPath
-                        );
                         it = m_pendingCloneAssignments.erase(it);
                         continue;
                     }
@@ -589,7 +566,6 @@ namespace Palworld {
                     auto skipVanillaGuard = it->at("SkipVanillaGuard").get<bool>();
                     if (ApplySingleFlowPatch(patch, skipVanillaGuard))
                     {
-                        PS::Log<LogLevel::Normal>(STR("Resolved deferred flow patch for {}\n"), RC::to_generic_string(patch.at("AssetPath").get<std::string>()));
                         it = m_pendingFlowPatches.erase(it);
                         continue;
                     }
@@ -670,7 +646,6 @@ namespace Palworld {
                         STR("TalkFlowClass")
                     };
 
-                    bool updatedHumanRow = false;
                     for (const auto& propName : candidateProps)
                     {
                         auto* prop = rowStruct->GetPropertyByName(propName.c_str());
@@ -680,29 +655,11 @@ namespace Palworld {
                         }
 
                         Palworld::PropertyHelper::CopyJsonValueToContainer(humanRow, prop, RC::to_string(TalkFlowPath));
-                        PS::Log<LogLevel::Normal>(
-                            STR("Assigned talkflow {} to DT_PalHumanParameter[{}].{}\n"),
-                            TalkFlowPath,
-                            CharacterId.ToString(),
-                            propName
-                        );
-                        updatedHumanRow = true;
                         break;
-                    }
-
-                    if (!updatedHumanRow)
-                    {
-                        PS::Log<LogLevel::Warning>(
-                            STR("No talkflow property found on DT_PalHumanParameter row {} while assigning {}\n"),
-                            CharacterId.ToString(),
-                            TalkFlowPath
-                        );
                     }
                 }
             }
         }
-
-        PS::Log<LogLevel::Normal>(STR("Assigned talkflow {} to NPC {}\n"), TalkFlowPath, CharacterId.ToString());
     }
 
     bool PalTalkFlowModLoader::IsConversationNodeSchema(const nlohmann::json& Nodes) const
@@ -881,11 +838,6 @@ namespace Palworld {
 
             if (!nodesByName.empty())
             {
-                PS::Log<LogLevel::Warning>(
-                    STR("Conversation schema fallback: clone '{}' has no owned nodes; using source graph nodes from '{}' for patching.\n"),
-                    AssetPath,
-                    RC::to_generic_string(sourceOuterName)
-                );
             }
         }
 
@@ -1749,7 +1701,6 @@ namespace Palworld {
             AddOrEditTalkText(Patch.at("Buttons"));
         }
 
-        PS::Log<LogLevel::Normal>(STR("Applied flow patch to {}\n"), AssetPath);
         return true;
     }
 
@@ -1841,11 +1792,6 @@ namespace Palworld {
 
                 if (outerNameNoClass == expectedShortName)
                 {
-                    PS::Log<LogLevel::Verbose>(
-                        STR("Flow asset '{}' resolved via loaded FlowNode outer '{}'.\n"),
-                        AssetPath,
-                        outer->GetPathName()
-                    );
                     return outer;
                 }
             }
@@ -2025,7 +1971,7 @@ namespace Palworld {
             }
         }
 
-        PS::Log<LogLevel::Normal>(STR("Patched node {}\n"), NodeObject->GetName());
+        
     }
 
     void PalTalkFlowModLoader::AddOrEditTalkText(const nlohmann::json& TextEntries)
@@ -2057,7 +2003,7 @@ namespace Palworld {
                 m_npcTalkTextTable->AddRow(MessageId, NewRow);
             }
 
-            PS::Log<LogLevel::Normal>(STR("Set DT_NpcTalkText[{}]\n"), MessageId.ToString());
+            
         }
     }
 }
