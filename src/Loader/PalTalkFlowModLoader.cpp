@@ -360,27 +360,27 @@ namespace Palworld {
             }
 
             bool didWork = false;
-            constexpr bool useClone = true;
             RC::StringType resolvedTalkFlowPath{};
+            const auto characterId = RC::to_generic_string(CharacterIdString);
+
+            auto ensureResolvedTalkFlowPath = [&]()
+            {
+                if (resolvedTalkFlowPath.empty())
+                {
+                    resolvedTalkFlowPath = ResolveAndAssignClonedTalkFlow(characterId, constants::cloneSourceTalkFlowAssetPath);
+                }
+            };
 
             if (RowData.is_string())
             {
-                resolvedTalkFlowPath = AssignTalkFlowToNpcWithCloneOption(
-                    RC::to_generic_string(CharacterIdString),
-                    constants::cloneSourceTalkFlowAssetPath,
-                    useClone
-                );
+                ensureResolvedTalkFlowPath();
                 didWork = true;
             }
             else if (RowData.is_object())
             {
                 if (RowData.contains("TalkFlowAssetPath"))
                 {
-                    resolvedTalkFlowPath = AssignTalkFlowToNpcWithCloneOption(
-                        RC::to_generic_string(CharacterIdString),
-                        constants::cloneSourceTalkFlowAssetPath,
-                        useClone
-                    );
+                    ensureResolvedTalkFlowPath();
                     didWork = true;
                 }
 
@@ -397,11 +397,7 @@ namespace Palworld {
 
                 if (!RowData.contains("TalkFlowAssetPath") && (RowData.contains("Text") || RowData.contains("Buttons")))
                 {
-                    resolvedTalkFlowPath = AssignTalkFlowToNpcWithCloneOption(
-                        RC::to_generic_string(CharacterIdString),
-                        constants::cloneSourceTalkFlowAssetPath,
-                        useClone
-                    );
+                    ensureResolvedTalkFlowPath();
                     didWork = true;
                 }
 
@@ -436,11 +432,7 @@ namespace Palworld {
 
                     if (resolvedTalkFlowPath.empty())
                     {
-                        resolvedTalkFlowPath = AssignTalkFlowToNpcWithCloneOption(
-                            RC::to_generic_string(CharacterIdString),
-                            constants::cloneSourceTalkFlowAssetPath,
-                            useClone
-                        );
+                        ensureResolvedTalkFlowPath();
                     }
 
                     const auto isVanillaNamespace = resolvedTalkFlowPath.rfind(constants::vanillaAssetPrefix, 0) == 0;
@@ -499,7 +491,7 @@ namespace Palworld {
 
             if (!didWork)
             {
-                throw std::runtime_error(std::format("Talkflow entry '{}' did not contain supported fields. Use TalkFlowAssetPath and/or Text/Buttons.", CharacterIdString));
+                throw std::runtime_error(std::format("Talkflow entry '{}' did not contain supported fields.", CharacterIdString));
             }
         }
 
@@ -578,38 +570,35 @@ namespace Palworld {
         m_isProcessingPending = false;
     }
 
-    RC::StringType PalTalkFlowModLoader::AssignTalkFlowToNpcWithCloneOption(const RC::StringType& CharacterIdString, const RC::StringType& TalkFlowPath, bool UseClone, bool ForceRebuildClone)
+    RC::StringType PalTalkFlowModLoader::ResolveAndAssignClonedTalkFlow(const RC::StringType& CharacterIdString, const RC::StringType& TalkFlowPath, bool ForceRebuildClone)
     {
         auto canonicalTalkFlowPath = CanonicalizeTalkFlowPath(TalkFlowPath);
         auto resolvedTalkFlowPath = canonicalTalkFlowPath;
-        if (UseClone)
+        TalkFlowCloneRequest cloneRequest{};
+        cloneRequest.CharacterId = CharacterIdString;
+        cloneRequest.SourceAssetPath = canonicalTalkFlowPath;
+        cloneRequest.ForceRebuild = ForceRebuildClone;
+        resolvedTalkFlowPath = m_talkFlowCloneManager.ResolveTalkFlowAssetPath(cloneRequest);
+
+        if (resolvedTalkFlowPath == canonicalTalkFlowPath)
         {
-            TalkFlowCloneRequest cloneRequest{};
-            cloneRequest.CharacterId = CharacterIdString;
-            cloneRequest.SourceAssetPath = canonicalTalkFlowPath;
-            cloneRequest.ForceRebuild = ForceRebuildClone;
-            resolvedTalkFlowPath = m_talkFlowCloneManager.ResolveTalkFlowAssetPath(cloneRequest);
-
-            if (resolvedTalkFlowPath == canonicalTalkFlowPath)
-            {
-                auto alreadyQueued = std::find_if(
-                    m_pendingCloneAssignments.begin(),
-                    m_pendingCloneAssignments.end(),
-                    [&](const PendingCloneAssignment& pending)
-                    {
-                        return pending.CharacterId == CharacterIdString && pending.SourceAssetPath == canonicalTalkFlowPath;
-                    }
-                ) != m_pendingCloneAssignments.end();
-
-                if (!alreadyQueued)
+            auto alreadyQueued = std::find_if(
+                m_pendingCloneAssignments.begin(),
+                m_pendingCloneAssignments.end(),
+                [&](const PendingCloneAssignment& pending)
                 {
-                    m_pendingCloneAssignments.push_back(PendingCloneAssignment{ CharacterIdString, canonicalTalkFlowPath, true });
-                    PS::Log<LogLevel::Warning>(
-                        STR("TalkFlow clone source not loaded yet for {} ({}). Queued for retry.\n"),
-                        CharacterIdString,
-                        canonicalTalkFlowPath
-                    );
+                    return pending.CharacterId == CharacterIdString && pending.SourceAssetPath == canonicalTalkFlowPath;
                 }
+            ) != m_pendingCloneAssignments.end();
+
+            if (!alreadyQueued)
+            {
+                m_pendingCloneAssignments.push_back(PendingCloneAssignment{ CharacterIdString, canonicalTalkFlowPath, true });
+                PS::Log<LogLevel::Warning>(
+                    STR("TalkFlow clone source not loaded yet for {} ({}). Queued for retry.\n"),
+                    CharacterIdString,
+                    canonicalTalkFlowPath
+                );
             }
         }
 
@@ -659,6 +648,38 @@ namespace Palworld {
                     }
                 }
             }
+        }
+    }
+
+    void PalTalkFlowModLoader::AddOrEditTalkText(const nlohmann::json& TextEntries)
+    {
+        if (!m_npcTalkTextTable)
+        {
+            PS::Log<LogLevel::Warning>(STR("DT_NpcTalkText not found, skipping talk text entries.\n"));
+            return;
+        }
+
+        for (auto& [MessageIdString, MessageText] : TextEntries.items())
+        {
+            if (!MessageText.is_string())
+            {
+                throw std::runtime_error(std::format("Text for MsgId '{}' must be a string.", MessageIdString));
+            }
+
+            auto MessageId = FName(RC::to_generic_string(MessageIdString), FNAME_Add);
+            auto ExistingTextRow = std::bit_cast<FPalLocalizedTextData*>(m_npcTalkTextTable->FindRowUnchecked(MessageId));
+            auto LocalizedText = FText(RC::to_generic_string(MessageText.get<std::string>()));
+            if (ExistingTextRow)
+            {
+                ExistingTextRow->TextData = LocalizedText;
+            }
+            else
+            {
+                FPalLocalizedTextData NewRow{};
+                NewRow.TextData = LocalizedText;
+                m_npcTalkTextTable->AddRow(MessageId, NewRow);
+            }
+
         }
     }
 
@@ -834,10 +855,6 @@ namespace Palworld {
                 }
 
                 classifyNode(nodeObject);
-            }
-
-            if (!nodesByName.empty())
-            {
             }
         }
 
@@ -1704,6 +1721,60 @@ namespace Palworld {
         return true;
     }
 
+    void PalTalkFlowModLoader::ApplyNodePatch(UObject* NodeObject, const nlohmann::json& NodePatch)
+    {
+        if (!NodePatch.is_object())
+        {
+            throw std::runtime_error("Node patch must be an object.");
+        }
+
+        auto normalizedNodePatch = NodePatch;
+        NormalizeNodePatchForEngineTypes(normalizedNodePatch);
+
+        const nlohmann::json* PropertiesToApply = &normalizedNodePatch;
+        if (normalizedNodePatch.contains("Properties"))
+        {
+            if (!normalizedNodePatch.at("Properties").is_object())
+            {
+                throw std::runtime_error("Node patch field Properties must be an object.");
+            }
+
+            PropertiesToApply = &normalizedNodePatch.at("Properties");
+        }
+
+        for (auto& [PropertyName, PropertyValue] : PropertiesToApply->items())
+        {
+            auto PropertyNameWide = RC::to_generic_string(PropertyName);
+            auto* Property = NodeObject->GetPropertyByNameInChain(PropertyNameWide.c_str());
+            if (!Property)
+            {
+                Property = Palworld::PropertyHelper::GetPropertyByName(NodeObject->GetClassPrivate(), PropertyNameWide);
+            }
+
+            if (!Property)
+            {
+                PS::Log<LogLevel::Warning>(STR("Node patch skipped unknown property {} on {}\n"), PropertyNameWide, NodeObject->GetName());
+                continue;
+            }
+
+            try
+            {
+                Palworld::PropertyHelper::CopyJsonValueToContainer(NodeObject, Property, PropertyValue);
+            }
+            catch (const std::exception& e)
+            {
+                PS::Log<LogLevel::Warning>(
+                    STR("Node patch skipped invalid property {} on {}: {}\n"),
+                    PropertyNameWide,
+                    NodeObject->GetName(),
+                    RC::to_generic_string(e.what())
+                );
+                continue;
+            }
+        }
+
+    }
+
     void PalTalkFlowModLoader::QueueFlowPatchRetry(const nlohmann::json& Patch, bool SkipVanillaGuard)
     {
         auto wrapper = nlohmann::json::object();
@@ -1916,94 +1987,6 @@ namespace Palworld {
             }
 
             AddTalkFlowPathCandidates(std::format(STR("{}.{}"), packageName, assetName), Candidates);
-        }
-    }
-
-    void PalTalkFlowModLoader::ApplyNodePatch(UObject* NodeObject, const nlohmann::json& NodePatch)
-    {
-        if (!NodePatch.is_object())
-        {
-            throw std::runtime_error("Node patch must be an object.");
-        }
-
-        auto normalizedNodePatch = NodePatch;
-        NormalizeNodePatchForEngineTypes(normalizedNodePatch);
-
-        const nlohmann::json* PropertiesToApply = &normalizedNodePatch;
-        if (normalizedNodePatch.contains("Properties"))
-        {
-            if (!normalizedNodePatch.at("Properties").is_object())
-            {
-                throw std::runtime_error("Node patch field Properties must be an object.");
-            }
-
-            PropertiesToApply = &normalizedNodePatch.at("Properties");
-        }
-
-        for (auto& [PropertyName, PropertyValue] : PropertiesToApply->items())
-        {
-            auto PropertyNameWide = RC::to_generic_string(PropertyName);
-            auto* Property = NodeObject->GetPropertyByNameInChain(PropertyNameWide.c_str());
-            if (!Property)
-            {
-                Property = Palworld::PropertyHelper::GetPropertyByName(NodeObject->GetClassPrivate(), PropertyNameWide);
-            }
-
-            if (!Property)
-            {
-                PS::Log<LogLevel::Warning>(STR("Node patch skipped unknown property {} on {}\n"), PropertyNameWide, NodeObject->GetName());
-                continue;
-            }
-
-            try
-            {
-                Palworld::PropertyHelper::CopyJsonValueToContainer(NodeObject, Property, PropertyValue);
-            }
-            catch (const std::exception& e)
-            {
-                PS::Log<LogLevel::Warning>(
-                    STR("Node patch skipped invalid property {} on {}: {}\n"),
-                    PropertyNameWide,
-                    NodeObject->GetName(),
-                    RC::to_generic_string(e.what())
-                );
-                continue;
-            }
-        }
-
-        
-    }
-
-    void PalTalkFlowModLoader::AddOrEditTalkText(const nlohmann::json& TextEntries)
-    {
-        if (!m_npcTalkTextTable)
-        {
-            PS::Log<LogLevel::Warning>(STR("DT_NpcTalkText not found, skipping talk text entries.\n"));
-            return;
-        }
-
-        for (auto& [MessageIdString, MessageText] : TextEntries.items())
-        {
-            if (!MessageText.is_string())
-            {
-                throw std::runtime_error(std::format("Text for MsgId '{}' must be a string.", MessageIdString));
-            }
-
-            auto MessageId = FName(RC::to_generic_string(MessageIdString), FNAME_Add);
-            auto ExistingTextRow = std::bit_cast<FPalLocalizedTextData*>(m_npcTalkTextTable->FindRowUnchecked(MessageId));
-            auto LocalizedText = FText(RC::to_generic_string(MessageText.get<std::string>()));
-            if (ExistingTextRow)
-            {
-                ExistingTextRow->TextData = LocalizedText;
-            }
-            else
-            {
-                FPalLocalizedTextData NewRow{};
-                NewRow.TextData = LocalizedText;
-                m_npcTalkTextTable->AddRow(MessageId, NewRow);
-            }
-
-            
         }
     }
 }

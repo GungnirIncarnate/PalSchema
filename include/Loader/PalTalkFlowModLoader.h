@@ -29,9 +29,11 @@ namespace Palworld {
             bool ForceRebuild = false;
         };
 
-        RC::StringType AssignTalkFlowToNpcWithCloneOption(const RC::StringType& CharacterIdString, const RC::StringType& TalkFlowPath, bool UseClone, bool ForceRebuildClone = false);
+        RC::StringType ResolveAndAssignClonedTalkFlow(const RC::StringType& CharacterIdString, const RC::StringType& TalkFlowPath, bool ForceRebuildClone = false);
 
         void AssignTalkFlowToNpc(const RC::StringType& CharacterIdString, const RC::StringType& TalkFlowPath);
+
+        void AddOrEditTalkText(const nlohmann::json& TextEntries);
 
         bool IsConversationNodeSchema(const nlohmann::json& Nodes) const;
 
@@ -41,9 +43,11 @@ namespace Palworld {
 
         bool ApplySingleFlowPatch(const nlohmann::json& Patch, bool SkipVanillaGuard = false);
 
-        void ProcessPending();
+        RC::Unreal::UObject* FindTalkFlowAsset(const RC::StringType& AssetPath) const;
 
         void QueueFlowPatchRetry(const nlohmann::json& Patch, bool SkipVanillaGuard);
+
+        void ProcessPending();
 
         RC::StringType CanonicalizeTalkFlowPath(const RC::StringType& TalkFlowPath) const;
 
@@ -51,11 +55,7 @@ namespace Palworld {
 
         void AddTalkFlowCandidatesFromDataTable(const RC::StringType& TalkFlowPath, std::vector<RC::StringType>& Candidates) const;
 
-        RC::Unreal::UObject* FindTalkFlowAsset(const RC::StringType& AssetPath) const;
-
         void ApplyNodePatch(RC::Unreal::UObject* NodeObject, const nlohmann::json& NodePatch);
-
-        void AddOrEditTalkText(const nlohmann::json& TextEntries);
 
         RC::Unreal::UClass* m_flowNodeClass = nullptr;
         RC::Unreal::UDataTable* m_npcTalkFlowTable = nullptr;

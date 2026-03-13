@@ -51,10 +51,6 @@ namespace Palworld {
             }
         }
 
-        // Groundwork behavior:
-        // - Non-vanilla/custom asset paths are already isolated, no clone required.
-        // - Vanilla paths should eventually be cloned into transient objects.
-        // - Until cloning logic is implemented, we warn once and return source path.
         auto isVanillaAssetPath = Request.SourceAssetPath.rfind(constants::vanillaAssetPrefix, 0) == 0;
         if (!isVanillaAssetPath)
         {
@@ -125,27 +121,6 @@ namespace Palworld {
         return std::format("{}::{}", RC::to_string(Request.CharacterId), RC::to_string(Request.SourceAssetPath));
     }
 
-    RC::StringType TalkFlowCloneManager::BuildCloneObjectName(const TalkFlowCloneRequest& Request) const
-    {
-        auto characterIdNarrow = RC::to_string(Request.CharacterId);
-        auto sourcePathNarrow = RC::to_string(Request.SourceAssetPath);
-
-        auto sourceNameStart = sourcePathNarrow.find_last_of('/');
-        auto sourceName = sourceNameStart == std::string::npos ? sourcePathNarrow : sourcePathNarrow.substr(sourceNameStart + 1);
-
-        for (auto& c : characterIdNarrow)
-        {
-            if (!std::isalnum(static_cast<unsigned char>(c))) c = '_';
-        }
-
-        for (auto& c : sourceName)
-        {
-            if (!std::isalnum(static_cast<unsigned char>(c))) c = '_';
-        }
-
-        return RC::to_generic_string(std::format("TFClone_{}_{}", characterIdNarrow, sourceName));
-    }
-
     bool TalkFlowCloneManager::IsValidResolvedAssetPath(const RC::StringType& AssetPath) const
     {
         if (AssetPath.empty())
@@ -164,17 +139,6 @@ namespace Palworld {
         }
 
         return true;
-    }
-
-    UObject* TalkFlowCloneManager::FindTransientOuter() const
-    {
-        auto transientOuter = UECustom::UObjectGlobals::StaticFindObject<UObject*>(nullptr, nullptr, STR("/Engine/Transient.Transient"));
-        if (transientOuter)
-        {
-            return transientOuter;
-        }
-
-        return nullptr;
     }
 
     UObject* TalkFlowCloneManager::FindAssetByPath(const RC::StringType& AssetPath) const
@@ -285,6 +249,38 @@ namespace Palworld {
         return nullptr;
     }
 
+    RC::StringType TalkFlowCloneManager::BuildCloneObjectName(const TalkFlowCloneRequest& Request) const
+    {
+        auto characterIdNarrow = RC::to_string(Request.CharacterId);
+        auto sourcePathNarrow = RC::to_string(Request.SourceAssetPath);
+
+        auto sourceNameStart = sourcePathNarrow.find_last_of('/');
+        auto sourceName = sourceNameStart == std::string::npos ? sourcePathNarrow : sourcePathNarrow.substr(sourceNameStart + 1);
+
+        for (auto& c : characterIdNarrow)
+        {
+            if (!std::isalnum(static_cast<unsigned char>(c))) c = '_';
+        }
+
+        for (auto& c : sourceName)
+        {
+            if (!std::isalnum(static_cast<unsigned char>(c))) c = '_';
+        }
+
+        return RC::to_generic_string(std::format("TFClone_{}_{}", characterIdNarrow, sourceName));
+    }
+
+    UObject* TalkFlowCloneManager::FindTransientOuter() const
+    {
+        auto transientOuter = UECustom::UObjectGlobals::StaticFindObject<UObject*>(nullptr, nullptr, STR("/Engine/Transient.Transient"));
+        if (transientOuter)
+        {
+            return transientOuter;
+        }
+
+        return nullptr;
+    }
+
     UObject* TalkFlowCloneManager::CreateCloneObject(UObject* SourceAsset, const TalkFlowCloneRequest& Request)
     {
         if (!SourceAsset)
@@ -336,7 +332,6 @@ namespace Palworld {
 
         std::unordered_map<std::string, UObject*> clonedNodesByGuidKey;
         std::unordered_map<UObject*, UObject*> clonedNodesBySourceNode;
-        int32_t clonedNodeCount = 0;
 
         for (auto* sourceNode : flowNodeObjects)
         {
@@ -358,7 +353,6 @@ namespace Palworld {
             }
 
             clonedNode->SetRootSet();
-            ++clonedNodeCount;
             clonedNodesBySourceNode.emplace(sourceNode, clonedNode);
 
             // Index by SOURCE node's GUID so the key matches what is stored in the Nodes FMap,
@@ -433,7 +427,6 @@ namespace Palworld {
         UECustom::FScriptMapHelper cloneMapHelper(cloneMapProperty, cloneMapData);
 
         int32_t sourceEntries = 0;
-        int32_t remappedCount = 0;
         int32_t unresolvedEntries = 0;
 
         sourceMapHelper.ForEachPair([&](void* sourceKeyPtr, void* sourceValuePtr)
@@ -479,10 +472,7 @@ namespace Palworld {
             }
 
             UObject* replacementSlot = replacementNode;
-            if (cloneMapHelper.SetValueByKey(sourceKeyPtr, &replacementSlot, true))
-            {
-                ++remappedCount;
-            }
+            cloneMapHelper.SetValueByKey(sourceKeyPtr, &replacementSlot, true);
         });
 
         if (unresolvedEntries > 0)
@@ -495,7 +485,7 @@ namespace Palworld {
             );
         }
 
-        (void)remappedCount;
+        
     }
 
     UObject* TalkFlowCloneManager::SpawnNodeInClone(
