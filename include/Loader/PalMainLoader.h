@@ -13,6 +13,7 @@
 #include "Loader/PalBlueprintModLoader.h"
 #include "Loader/PalEnumLoader.h"
 #include "Loader/PalHelpGuideModLoader.h"
+#include "Loader/PalTalkFlowModLoader.h"
 #include "Loader/PalResourceLoader.h"
 #include "Loader/PalSpawnLoader.h"
 #include "FileWatch.hpp"
@@ -39,7 +40,6 @@ namespace Palworld {
 		void PreInitialize();
 
 		void Initialize();
-
         // Should be called in Game Thread
         void ReloadMods();
 	private:
@@ -54,6 +54,7 @@ namespace Palworld {
 		PalBlueprintModLoader BlueprintModLoader;
         PalEnumLoader EnumLoader;
 		PalHelpGuideModLoader HelpGuideModLoader;
+        PalTalkFlowModLoader TalkFlowModLoader;
         PalResourceLoader ResourceLoader;
         PalSpawnLoader SpawnLoader;
 
