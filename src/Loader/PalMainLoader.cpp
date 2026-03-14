@@ -223,11 +223,17 @@ namespace Palworld {
                                 }
                                 else if (folderType == constants::npcsFolder)
                                 {
-                                    HumanModLoader.Load(data);
-                                }
-                                else if (folderType == constants::talkflowsFolder)
-                                {
-                                    TalkFlowModLoader.Load(data);
+                                    const auto isNpcTalkflowFile =
+                                        fs::path(path).parent_path().filename().string() == constants::talkflowsFolder;
+
+                                    if (isNpcTalkflowFile)
+                                    {
+                                        TalkFlowModLoader.Load(data);
+                                    }
+                                    else
+                                    {
+                                        HumanModLoader.Load(data);
+                                    }
                                 }
                                 else if (folderType == constants::rawFolder)
                                 {
@@ -400,7 +406,7 @@ namespace Palworld {
                     HumanModLoader.Load(data);
                 });
 
-                auto talkflowFolder = modPath / constants::talkflowsFolder;
+                auto talkflowFolder = npcFolder / constants::talkflowsFolder;
                 ParseJsonFilesInPath(talkflowFolder, [&](const nlohmann::json& data) {
                     TalkFlowModLoader.Load(data);
                 });
