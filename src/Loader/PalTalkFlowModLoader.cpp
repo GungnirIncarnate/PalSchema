@@ -20,6 +20,266 @@ using namespace RC;
 using namespace RC::Unreal;
 
 namespace Palworld {
+
+    namespace constants {
+        constexpr const TCHAR* cloneSourceTalkFlowAssetPath = STR("/Game/Pal/Blueprint/FlowGraph/NPCTalkFlow/Graph/FABP_CommonItemShop.FABP_CommonItemShop");
+        constexpr const TCHAR* vanillaAssetPrefix = STR("/Game/Pal/");
+    }
+
+    PalTalkFlowModLoader::PalTalkFlowModLoader() : PalModLoaderBase("talkflows") {}
+
+    PalTalkFlowModLoader::~PalTalkFlowModLoader() {}
+
+    void PalTalkFlowModLoader::Initialize()
+    {
+        m_flowNodeClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/Flow.FlowNode"));
+        m_talkFlowCloneManager.Initialize(m_flowNodeClass);
+
+        m_npcTalkFlowTable = UObjectGlobals::StaticFindObject<UDataTable*>(nullptr, nullptr,
+            STR("/Game/Pal/Blueprint/Component/NPCTalk/DT_NPCTalkFlow.DT_NPCTalkFlow"));
+
+        m_humanParamTable = UObjectGlobals::StaticFindObject<UDataTable*>(nullptr, nullptr,
+            STR("/Game/Pal/DataTable/Character/DT_PalHumanParameter.DT_PalHumanParameter"));
+
+        m_npcTalkTextTable = UObjectGlobals::StaticFindObject<UDataTable*>(nullptr, nullptr,
+            STR("/Game/Pal/DataTable/Text/DT_NpcTalkText.DT_NpcTalkText"));
+    }
+
+    void PalTalkFlowModLoader::Load(const nlohmann::json& Data)
+    {
+        if (Data.contains("FlowPatches"))
+        {
+            ApplyFlowPatches(Data.at("FlowPatches"));
+        }
+
+        if (Data.contains("$flowPatches"))
+        {
+            ApplyFlowPatches(Data.at("$flowPatches"));
+        }
+
+        if (!m_npcTalkFlowTable)
+        {
+            throw std::runtime_error("Failed to load talkflows: DT_NPCTalkFlow could not be found.");
+        }
+
+        for (auto& [CharacterIdString, RowData] : Data.items())
+        {
+            if (CharacterIdString == "FlowPatches" || CharacterIdString == "$flowPatches")
+            {
+                continue;
+            }
+
+            bool didWork = false;
+            RC::StringType resolvedTalkFlowPath{};
+            const auto characterId = RC::to_generic_string(CharacterIdString);
+
+            auto ensureResolvedTalkFlowPath = [&]()
+            {
+                if (resolvedTalkFlowPath.empty())
+                {
+                    resolvedTalkFlowPath = ResolveAndAssignClonedTalkFlow(characterId, constants::cloneSourceTalkFlowAssetPath);
+                }
+            };
+
+            if (RowData.is_string())
+            {
+                ensureResolvedTalkFlowPath();
+                didWork = true;
+            }
+            else if (RowData.is_object())
+            {
+                if (RowData.contains("TalkFlowAssetPath"))
+                {
+                    ensureResolvedTalkFlowPath();
+                    didWork = true;
+                }
+
+                std::optional<std::string> preferredStartNode;
+                if (RowData.contains("StartNode"))
+                {
+                    if (!RowData.at("StartNode").is_string())
+                    {
+                        throw std::runtime_error(std::format("StartNode for '{}' must be a string node id.", CharacterIdString));
+                    }
+
+                    preferredStartNode = RowData.at("StartNode").get<std::string>();
+                }
+
+                if (!RowData.contains("TalkFlowAssetPath") && (RowData.contains("Text") || RowData.contains("Buttons")))
+                {
+                    ensureResolvedTalkFlowPath();
+                    didWork = true;
+                }
+
+                if (RowData.contains("Text"))
+                {
+                    if (!RowData.at("Text").is_object())
+                    {
+                        throw std::runtime_error(std::format("Text for '{}' must be an object mapping MsgId -> text.", CharacterIdString));
+                    }
+
+                    AddOrEditTalkText(RowData.at("Text"));
+                    didWork = true;
+                }
+
+                if (RowData.contains("Buttons"))
+                {
+                    if (!RowData.at("Buttons").is_object())
+                    {
+                        throw std::runtime_error(std::format("Buttons for '{}' must be an object mapping ChoiceMsgId -> text.", CharacterIdString));
+                    }
+
+                    AddOrEditTalkText(RowData.at("Buttons"));
+                    didWork = true;
+                }
+
+                if (RowData.contains("Nodes"))
+                {
+                    if (!RowData.at("Nodes").is_object())
+                    {
+                        throw std::runtime_error(std::format("Nodes for '{}' must be an object mapping NodeName -> patch.", CharacterIdString));
+                    }
+
+                    if (resolvedTalkFlowPath.empty())
+                    {
+                        ensureResolvedTalkFlowPath();
+                    }
+
+                    const auto isVanillaNamespace = resolvedTalkFlowPath.rfind(constants::vanillaAssetPrefix, 0) == 0;
+                    const auto looksLikeClonePath = resolvedTalkFlowPath.find(STR("TFClone_")) != RC::StringType::npos;
+                    if (isVanillaNamespace && !looksLikeClonePath)
+                    {
+                        throw std::runtime_error(std::format(
+                            "Failed to isolate talkflow for '{}'. Clone resolution returned vanilla path '{}'. "
+                            "Refusing to patch nodes on shared asset.",
+                            CharacterIdString,
+                            RC::to_string(resolvedTalkFlowPath)
+                        ));
+                    }
+
+                    const auto& nodesPayload = RowData.at("Nodes");
+
+                    nlohmann::json perNpcPatch;
+                    if (IsConversationNodeSchema(nodesPayload))
+                    {
+                        perNpcPatch = BuildConversationPatchFromSchema(CharacterIdString, nodesPayload, resolvedTalkFlowPath, preferredStartNode);
+                        if (perNpcPatch.contains("Text"))
+                        {
+                            AddOrEditTalkText(perNpcPatch.at("Text"));
+                        }
+
+                        if (perNpcPatch.contains("Buttons"))
+                        {
+                            AddOrEditTalkText(perNpcPatch.at("Buttons"));
+                        }
+                    }
+                    else
+                    {
+                        perNpcPatch = nlohmann::json::object();
+                        perNpcPatch["AssetPath"] = RC::to_string(resolvedTalkFlowPath);
+                        perNpcPatch["Nodes"] = nodesPayload;
+                    }
+
+                    if (!ApplySingleFlowPatch(perNpcPatch, true))
+                    {
+                        QueueFlowPatchRetry(perNpcPatch, true);
+                    }
+                    else
+                    {
+                        PS::Log<LogLevel::Normal>(
+                            STR("Applied talkflow patch for NPC {}\n"),
+                            RC::to_generic_string(CharacterIdString)
+                        );
+                    }
+                    didWork = true;
+                }
+            }
+            else
+            {
+                throw std::runtime_error(std::format("TalkFlow value for '{}' must be a string path or an object.", CharacterIdString));
+            }
+
+            if (!didWork)
+            {
+                throw std::runtime_error(std::format("Talkflow entry '{}' did not contain supported fields.", CharacterIdString));
+            }
+        }
+
+        ProcessPending();
+    }
+
+    void PalTalkFlowModLoader::ProcessPending()
+    {
+        if (m_isProcessingPending)
+        {
+            m_processPendingRequested = true;
+            return;
+        }
+
+        if (!m_npcTalkFlowTable || !m_flowNodeClass)
+        {
+            return;
+        }
+
+        if (m_npcTalkFlowTable->IsUnreachable() || m_flowNodeClass->IsUnreachable())
+        {
+            return;
+        }
+
+        m_isProcessingPending = true;
+        do
+        {
+            m_processPendingRequested = false;
+
+            if (!m_pendingCloneAssignments.empty())
+            {
+                auto it = m_pendingCloneAssignments.begin();
+                while (it != m_pendingCloneAssignments.end())
+                {
+                    TalkFlowCloneRequest cloneRequest{};
+                    cloneRequest.CharacterId = it->CharacterId;
+                    cloneRequest.SourceAssetPath = it->SourceAssetPath;
+                    cloneRequest.ForceRebuild = it->ForceRebuild;
+
+                    auto resolvedTalkFlowPath = m_talkFlowCloneManager.ResolveTalkFlowAssetPath(cloneRequest);
+                    if (resolvedTalkFlowPath != it->SourceAssetPath)
+                    {
+                        AssignTalkFlowToNpc(it->CharacterId, resolvedTalkFlowPath);
+                        it = m_pendingCloneAssignments.erase(it);
+                        continue;
+                    }
+
+                    ++it;
+                }
+            }
+
+            if (!m_pendingFlowPatches.empty())
+            {
+                auto it = m_pendingFlowPatches.begin();
+                while (it != m_pendingFlowPatches.end())
+                {
+                    if (!it->is_object() || !it->contains("Patch") || !it->at("Patch").is_object() || !it->contains("SkipVanillaGuard") || !it->at("SkipVanillaGuard").is_boolean())
+                    {
+                        it = m_pendingFlowPatches.erase(it);
+                        continue;
+                    }
+
+                    auto& patch = it->at("Patch");
+                    auto skipVanillaGuard = it->at("SkipVanillaGuard").get<bool>();
+                    if (ApplySingleFlowPatch(patch, skipVanillaGuard))
+                    {
+                        it = m_pendingFlowPatches.erase(it);
+                        continue;
+                    }
+
+                    ++it;
+                }
+            }
+
+        } while (m_processPendingRequested);
+        m_isProcessingPending = false;
+    }
+
     namespace {
         bool TryParseHexUint32(const std::string& text, uint32_t& outValue)
         {
@@ -309,265 +569,6 @@ namespace Palworld {
                 value.erase("NodeName");
             }
         }
-    }
-
-    namespace constants {
-        constexpr const TCHAR* cloneSourceTalkFlowAssetPath = STR("/Game/Pal/Blueprint/FlowGraph/NPCTalkFlow/Graph/FABP_CommonItemShop.FABP_CommonItemShop");
-        constexpr const TCHAR* vanillaAssetPrefix = STR("/Game/Pal/");
-    }
-
-    PalTalkFlowModLoader::PalTalkFlowModLoader() : PalModLoaderBase("talkflows") {}
-
-    PalTalkFlowModLoader::~PalTalkFlowModLoader() {}
-
-    void PalTalkFlowModLoader::Initialize()
-    {
-        m_flowNodeClass = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/Flow.FlowNode"));
-        m_talkFlowCloneManager.Initialize(m_flowNodeClass);
-
-        m_npcTalkFlowTable = UObjectGlobals::StaticFindObject<UDataTable*>(nullptr, nullptr,
-            STR("/Game/Pal/Blueprint/Component/NPCTalk/DT_NPCTalkFlow.DT_NPCTalkFlow"));
-
-        m_humanParamTable = UObjectGlobals::StaticFindObject<UDataTable*>(nullptr, nullptr,
-            STR("/Game/Pal/DataTable/Character/DT_PalHumanParameter.DT_PalHumanParameter"));
-
-        m_npcTalkTextTable = UObjectGlobals::StaticFindObject<UDataTable*>(nullptr, nullptr,
-            STR("/Game/Pal/DataTable/Text/DT_NpcTalkText.DT_NpcTalkText"));
-    }
-
-    void PalTalkFlowModLoader::Load(const nlohmann::json& Data)
-    {
-        if (Data.contains("FlowPatches"))
-        {
-            ApplyFlowPatches(Data.at("FlowPatches"));
-        }
-
-        if (Data.contains("$flowPatches"))
-        {
-            ApplyFlowPatches(Data.at("$flowPatches"));
-        }
-
-        if (!m_npcTalkFlowTable)
-        {
-            throw std::runtime_error("Failed to load talkflows: DT_NPCTalkFlow could not be found.");
-        }
-
-        for (auto& [CharacterIdString, RowData] : Data.items())
-        {
-            if (CharacterIdString == "FlowPatches" || CharacterIdString == "$flowPatches")
-            {
-                continue;
-            }
-
-            bool didWork = false;
-            RC::StringType resolvedTalkFlowPath{};
-            const auto characterId = RC::to_generic_string(CharacterIdString);
-
-            auto ensureResolvedTalkFlowPath = [&]()
-            {
-                if (resolvedTalkFlowPath.empty())
-                {
-                    resolvedTalkFlowPath = ResolveAndAssignClonedTalkFlow(characterId, constants::cloneSourceTalkFlowAssetPath);
-                }
-            };
-
-            if (RowData.is_string())
-            {
-                ensureResolvedTalkFlowPath();
-                didWork = true;
-            }
-            else if (RowData.is_object())
-            {
-                if (RowData.contains("TalkFlowAssetPath"))
-                {
-                    ensureResolvedTalkFlowPath();
-                    didWork = true;
-                }
-
-                std::optional<std::string> preferredStartNode;
-                if (RowData.contains("StartNode"))
-                {
-                    if (!RowData.at("StartNode").is_string())
-                    {
-                        throw std::runtime_error(std::format("StartNode for '{}' must be a string node id.", CharacterIdString));
-                    }
-
-                    preferredStartNode = RowData.at("StartNode").get<std::string>();
-                }
-
-                if (!RowData.contains("TalkFlowAssetPath") && (RowData.contains("Text") || RowData.contains("Buttons")))
-                {
-                    ensureResolvedTalkFlowPath();
-                    didWork = true;
-                }
-
-                if (RowData.contains("Text"))
-                {
-                    if (!RowData.at("Text").is_object())
-                    {
-                        throw std::runtime_error(std::format("Text for '{}' must be an object mapping MsgId -> text.", CharacterIdString));
-                    }
-
-                    AddOrEditTalkText(RowData.at("Text"));
-                    didWork = true;
-                }
-
-                if (RowData.contains("Buttons"))
-                {
-                    if (!RowData.at("Buttons").is_object())
-                    {
-                        throw std::runtime_error(std::format("Buttons for '{}' must be an object mapping ChoiceMsgId -> text.", CharacterIdString));
-                    }
-
-                    AddOrEditTalkText(RowData.at("Buttons"));
-                    didWork = true;
-                }
-
-                if (RowData.contains("Nodes"))
-                {
-                    if (!RowData.at("Nodes").is_object())
-                    {
-                        throw std::runtime_error(std::format("Nodes for '{}' must be an object mapping NodeName -> patch.", CharacterIdString));
-                    }
-
-                    if (resolvedTalkFlowPath.empty())
-                    {
-                        ensureResolvedTalkFlowPath();
-                    }
-
-                    const auto isVanillaNamespace = resolvedTalkFlowPath.rfind(constants::vanillaAssetPrefix, 0) == 0;
-                    const auto looksLikeClonePath = resolvedTalkFlowPath.find(STR("TFClone_")) != RC::StringType::npos;
-                    if (isVanillaNamespace && !looksLikeClonePath)
-                    {
-                        throw std::runtime_error(std::format(
-                            "Failed to isolate talkflow for '{}'. Clone resolution returned vanilla path '{}'. "
-                            "Refusing to patch nodes on shared asset.",
-                            CharacterIdString,
-                            RC::to_string(resolvedTalkFlowPath)
-                        ));
-                    }
-
-                    const auto& nodesPayload = RowData.at("Nodes");
-
-                    nlohmann::json perNpcPatch;
-                    if (IsConversationNodeSchema(nodesPayload))
-                    {
-                        perNpcPatch = BuildConversationPatchFromSchema(CharacterIdString, nodesPayload, resolvedTalkFlowPath, preferredStartNode);
-                        if (perNpcPatch.contains("Text"))
-                        {
-                            AddOrEditTalkText(perNpcPatch.at("Text"));
-                        }
-
-                        if (perNpcPatch.contains("Buttons"))
-                        {
-                            AddOrEditTalkText(perNpcPatch.at("Buttons"));
-                        }
-                    }
-                    else
-                    {
-                        perNpcPatch = nlohmann::json::object();
-                        perNpcPatch["AssetPath"] = RC::to_string(resolvedTalkFlowPath);
-                        perNpcPatch["Nodes"] = nodesPayload;
-                    }
-
-                    if (!ApplySingleFlowPatch(perNpcPatch, true))
-                    {
-                        QueueFlowPatchRetry(perNpcPatch, true);
-                    }
-                    else
-                    {
-                        PS::Log<LogLevel::Normal>(
-                            STR("Applied talkflow patch for NPC {}\n"),
-                            RC::to_generic_string(CharacterIdString)
-                        );
-                    }
-                    didWork = true;
-                }
-            }
-            else
-            {
-                throw std::runtime_error(std::format("TalkFlow value for '{}' must be a string path or an object.", CharacterIdString));
-            }
-
-            if (!didWork)
-            {
-                throw std::runtime_error(std::format("Talkflow entry '{}' did not contain supported fields.", CharacterIdString));
-            }
-        }
-
-        ProcessPending();
-    }
-
-    void PalTalkFlowModLoader::ProcessPending()
-    {
-        if (m_isProcessingPending)
-        {
-            m_processPendingRequested = true;
-            return;
-        }
-
-        if (!m_npcTalkFlowTable || !m_flowNodeClass)
-        {
-            return;
-        }
-
-        if (m_npcTalkFlowTable->IsUnreachable() || m_flowNodeClass->IsUnreachable())
-        {
-            return;
-        }
-
-        m_isProcessingPending = true;
-        do
-        {
-            m_processPendingRequested = false;
-
-            if (!m_pendingCloneAssignments.empty())
-            {
-                auto it = m_pendingCloneAssignments.begin();
-                while (it != m_pendingCloneAssignments.end())
-                {
-                    TalkFlowCloneRequest cloneRequest{};
-                    cloneRequest.CharacterId = it->CharacterId;
-                    cloneRequest.SourceAssetPath = it->SourceAssetPath;
-                    cloneRequest.ForceRebuild = it->ForceRebuild;
-
-                    auto resolvedTalkFlowPath = m_talkFlowCloneManager.ResolveTalkFlowAssetPath(cloneRequest);
-                    if (resolvedTalkFlowPath != it->SourceAssetPath)
-                    {
-                        AssignTalkFlowToNpc(it->CharacterId, resolvedTalkFlowPath);
-                        it = m_pendingCloneAssignments.erase(it);
-                        continue;
-                    }
-
-                    ++it;
-                }
-            }
-
-            if (!m_pendingFlowPatches.empty())
-            {
-                auto it = m_pendingFlowPatches.begin();
-                while (it != m_pendingFlowPatches.end())
-                {
-                    if (!it->is_object() || !it->contains("Patch") || !it->at("Patch").is_object() || !it->contains("SkipVanillaGuard") || !it->at("SkipVanillaGuard").is_boolean())
-                    {
-                        it = m_pendingFlowPatches.erase(it);
-                        continue;
-                    }
-
-                    auto& patch = it->at("Patch");
-                    auto skipVanillaGuard = it->at("SkipVanillaGuard").get<bool>();
-                    if (ApplySingleFlowPatch(patch, skipVanillaGuard))
-                    {
-                        it = m_pendingFlowPatches.erase(it);
-                        continue;
-                    }
-
-                    ++it;
-                }
-            }
-
-        } while (m_processPendingRequested);
-        m_isProcessingPending = false;
     }
 
     RC::StringType PalTalkFlowModLoader::ResolveAndAssignClonedTalkFlow(const RC::StringType& CharacterIdString, const RC::StringType& TalkFlowPath, bool ForceRebuildClone)
