@@ -1,7 +1,11 @@
 {
     "DT_NpcTalkText": {
-        "BountyTrader": "Need something? I handle bounty contracts.",
-        "CHOICE_BOUNTY_SHOP_BUY": "Show me available bounties.",
-        "CHOICE_BOUNTY_SHOP_EXIT": "The information on the bounties should be with the informants scattered around.\r\nTalk to them and track down the bounties."
+        "GUN_TESTNPC_GREETING": "Welcome. Looking for spheres, gems, or materials?",
+        "GUN_TESTNPC_GREETING_MORE": "More?",
+        "GUN_TESTNPC_GREETING_CHAT": "Talk To Me...",
+        "GUN_TESTNPC_GREETING_GO_AWAY": "Go Away",
+        "GUN_TESTNPC_GREETING_SHOP": "Let's Shop",
+        "GUN_TESTNPC_CONVERSATION": "Just wanna chat huh?",
+        "GUN_TESTNPC_TESTING": "This is a second linked message"
     }
 }

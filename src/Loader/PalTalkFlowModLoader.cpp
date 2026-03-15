@@ -707,7 +707,8 @@ namespace Palworld {
                 continue;
             }
 
-            if (!nodeDef.contains("Msg") || !nodeDef.at("Msg").is_string())
+            const auto hasDefaultMsg = nodeDef.contains("DefaultMsg") && nodeDef.at("DefaultMsg").is_string();
+            if (!hasDefaultMsg)
             {
                 return false;
             }
@@ -727,7 +728,8 @@ namespace Palworld {
                         return false;
                     }
 
-                    if (!buttonDef.contains("Text") || !buttonDef.at("Text").is_string())
+                    const auto hasDefaultText = buttonDef.contains("DefaultText") && buttonDef.at("DefaultText").is_string();
+                    if (!hasDefaultText)
                     {
                         return false;
                     }
@@ -1179,6 +1181,122 @@ namespace Palworld {
         auto& nodePatches = patch["Nodes"];
         auto& textEntries = patch["Text"];
         auto& buttonEntries = patch["Buttons"];
+        std::unordered_map<std::string, std::string> registeredTalkTextDefaults;
+
+        auto registerTalkTextEntry = [&](nlohmann::json& targetEntries, const std::string& textId, const std::string& defaultText, const std::string& context)
+        {
+            auto existingDefaultIt = registeredTalkTextDefaults.find(textId);
+            if (existingDefaultIt != registeredTalkTextDefaults.end())
+            {
+                if (existingDefaultIt->second != defaultText)
+                {
+                    throw std::runtime_error(std::format(
+                        "Conversation '{}': TextID '{}' is used with conflicting default text while processing {}.",
+                        OwnerId,
+                        textId,
+                        context
+                    ));
+                }
+            }
+            else
+            {
+                registeredTalkTextDefaults.emplace(textId, defaultText);
+            }
+
+            targetEntries[textId] = defaultText;
+        };
+
+        auto resolveNodeDefaultMsg = [&](const std::string& logicalId, const nlohmann::json& nodeDef) -> std::string
+        {
+            if (!nodeDef.contains("DefaultMsg"))
+            {
+                throw std::runtime_error(std::format(
+                    "Conversation '{}': node '{}' must provide string DefaultMsg.",
+                    OwnerId,
+                    logicalId
+                ));
+            }
+
+            if (!nodeDef.at("DefaultMsg").is_string())
+            {
+                throw std::runtime_error(std::format(
+                    "Conversation '{}': node '{}' has non-string DefaultMsg.",
+                    OwnerId,
+                    logicalId
+                ));
+            }
+
+            return nodeDef.at("DefaultMsg").get<std::string>();
+        };
+
+        auto resolveNodeTextId = [&](const std::string& logicalId, const nlohmann::json& nodeDef) -> std::string
+        {
+            if (nodeDef.contains("TextID"))
+            {
+                if (!nodeDef.at("TextID").is_string())
+                {
+                    throw std::runtime_error(std::format(
+                        "Conversation '{}': node '{}' has non-string TextID.",
+                        OwnerId,
+                        logicalId
+                    ));
+                }
+
+                return nodeDef.at("TextID").get<std::string>();
+            }
+
+            return std::format("{}_{}_MSG", ownerToken, SanitizeToken(logicalId));
+        };
+
+        auto resolveButtonDefaultText = [&](const std::string& logicalId, const std::string& buttonId, const nlohmann::json& buttonDef) -> std::string
+        {
+            if (!buttonDef.contains("DefaultText"))
+            {
+                throw std::runtime_error(std::format(
+                    "Conversation '{}': button '{}' in node '{}' must provide string DefaultText.",
+                    OwnerId,
+                    buttonId,
+                    logicalId
+                ));
+            }
+
+            if (!buttonDef.at("DefaultText").is_string())
+            {
+                throw std::runtime_error(std::format(
+                    "Conversation '{}': button '{}' in node '{}' has non-string DefaultText.",
+                    OwnerId,
+                    buttonId,
+                    logicalId
+                ));
+            }
+
+            return buttonDef.at("DefaultText").get<std::string>();
+        };
+
+        auto resolveButtonTextId = [&](const std::string& logicalId, const std::string& buttonId, const nlohmann::json& buttonDef) -> std::string
+        {
+            if (buttonDef.contains("TextID"))
+            {
+                if (!buttonDef.at("TextID").is_string())
+                {
+                    throw std::runtime_error(std::format(
+                        "Conversation '{}': button '{}' in node '{}' has non-string TextID.",
+                        OwnerId,
+                        buttonId,
+                        logicalId
+                    ));
+                }
+
+                return buttonDef.at("TextID").get<std::string>();
+            }
+
+            return std::format(
+                "{}_{}_BTN_{}",
+                ownerToken,
+                SanitizeToken(logicalId),
+                SanitizeToken(buttonId)
+            );
+        };
 
         for (const auto& nodeName : mappedBuyShopNodes)
         {
@@ -1277,7 +1395,7 @@ namespace Palworld {
                         }
 
                         const auto exitMsgId = std::format("{}_EXIT", ownerToken);
-                        textEntries[exitMsgId] = "See you.";
+                        registerTalkTextEntry(textEntries, exitMsgId, "See you.", std::format("exit node for '{}'", logicalId));
                         nodePatches[exitNodeName.value()] = {
                             { "MsgIdList", nlohmann::json::array({ exitMsgId }) }
                         };
@@ -1325,7 +1443,7 @@ namespace Palworld {
                 }
 
                 const auto exitMsgId = std::format("{}_EXIT", ownerToken);
-                textEntries[exitMsgId] = "See you.";
+                registerTalkTextEntry(textEntries, exitMsgId, "See you.", std::format("implicit exit node for '{}'", logicalId));
                 nodePatches[exitNodeName.value()] = {
                     { "MsgIdList", nlohmann::json::array({ exitMsgId }) }
                 };
@@ -1346,8 +1464,8 @@ namespace Palworld {
                 continue;
             }
 
-            const auto msgId = std::format("{}_{}_MSG", ownerToken, SanitizeToken(logicalId));
-            textEntries[msgId] = nodeDef.at("Msg").get<std::string>();
+            const auto msgId = resolveNodeTextId(logicalId, nodeDef);
+            registerTalkTextEntry(textEntries, msgId, resolveNodeDefaultMsg(logicalId, nodeDef), std::format("node '{}'", logicalId));
 
             auto messageNodeIt = logicalToMessageNode.find(logicalId);
             if (messageNodeIt == logicalToMessageNode.end())
@@ -1437,14 +1555,8 @@ namespace Palworld {
 
             for (const auto& [buttonId, buttonDef] : nodeDef.at("Buttons").items())
             {
-                const auto buttonMsgId = std::format(
-                    "{}_{}_BTN_{}",
-                    ownerToken,
-                    SanitizeToken(logicalId),
-                    SanitizeToken(buttonId)
-                );
-
-                buttonEntries[buttonMsgId] = buttonDef.at("Text").get<std::string>();
+                const auto buttonMsgId = resolveButtonTextId(logicalId, buttonId, buttonDef);
+                registerTalkTextEntry(buttonEntries, buttonMsgId, resolveButtonDefaultText(logicalId, buttonId, buttonDef), std::format("button '{}' in node '{}'", buttonId, logicalId));
                 choicePatch["ChoiceMsgIDList"].push_back(buttonMsgId);
                 choicePatch["OutputPins"].push_back({
                     { "PinName", buttonMsgId },
