@@ -517,6 +517,61 @@ namespace Palworld {
 
         if (!targetClass)
         {
+            // Fallback: resolve class by convention path and force a blocking load.
+            auto classNameWide = RC::to_generic_string(DesiredClassName);
+            auto baseNameWide = classNameWide;
+            if (baseNameWide.size() > 2 && baseNameWide.ends_with(STR("_C")))
+            {
+                baseNameWide = baseNameWide.substr(0, baseNameWide.size() - 2);
+            }
+
+            std::vector<RC::StringType> classPathCandidates;
+            classPathCandidates.emplace_back(
+                std::format(
+                    STR("/Game/Pal/Blueprint/FlowGraph/NPCTalkFlow/CommonNode/{}.{}"),
+                    baseNameWide,
+                    classNameWide));
+            classPathCandidates.emplace_back(
+                std::format(
+                    STR("/Game/Pal/Blueprint/FlowGraph/NPCTalkFlow/CommonNode/{}.{}_C"),
+                    baseNameWide,
+                    baseNameWide));
+            classPathCandidates.emplace_back(
+                std::format(
+                    STR("/Game/Pal/Blueprint/FlowGraph/NPCTalkFlow/CustomNode/{}.{}"),
+                    baseNameWide,
+                    classNameWide));
+            classPathCandidates.emplace_back(
+                std::format(
+                    STR("/Game/Pal/Blueprint/FlowGraph/NPCTalkFlow/CustomNode/{}.{}_C"),
+                    baseNameWide,
+                    baseNameWide));
+
+            for (const auto& candidatePath : classPathCandidates)
+            {
+                auto* loadedObject = FindAssetByPath(candidatePath);
+                if (!loadedObject)
+                {
+                    continue;
+                }
+
+                if (RC::to_string(loadedObject->GetName()) == DesiredClassName)
+                {
+                    targetClass = static_cast<UClass*>(loadedObject);
+                    break;
+                }
+
+                auto* loadedClass = loadedObject->GetClassPrivate();
+                if (loadedClass && RC::to_string(loadedClass->GetName()) == DesiredClassName)
+                {
+                    targetClass = static_cast<UClass*>(loadedClass);
+                    break;
+                }
+            }
+        }
+
+        if (!targetClass)
+        {
             PS::Log<LogLevel::Warning>(
                 STR("SpawnNodeInClone: class '{}' not found among loaded flow nodes for clone '{}'\n"),
                 RC::to_generic_string(DesiredClassName),

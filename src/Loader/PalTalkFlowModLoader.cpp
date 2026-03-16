@@ -699,11 +699,15 @@ namespace Palworld {
             }
 
             const auto nodeType = nodeDef.value("Type", std::string{});
-            const auto isShopNodeType = (nodeType == "ItemShopBuy" || nodeType == "ItemShopSell");
+            const auto isPureNodeType = (
+                nodeType == "ItemShopBuy" || nodeType == "ItemShopSell" ||
+                nodeType == "PalShopBuy" || nodeType == "PalShopSell" ||
+                nodeType == "GetItem" ||
+                nodeType == "TalkCountBranch");
 
-            if (isShopNodeType)
+            if (isPureNodeType)
             {
-                // Shop terminal nodes intentionally don't require Msg/Buttons.
+                // Pure nodes intentionally don't require Msg/Buttons.
                 continue;
             }
 
@@ -766,6 +770,11 @@ namespace Palworld {
         std::vector<std::string> openItemShopNodes;
         std::vector<std::string> openItemShopBuyNodes;
         std::vector<std::string> openItemShopSellNodes;
+        std::vector<std::string> openPalShopNodes;
+        std::vector<std::string> openPalShopBuyNodes;
+        std::vector<std::string> openPalShopSellNodes;
+        std::vector<std::string> getItemNodes;
+        std::vector<std::string> talkCountBranchNodes;
 
         auto classifyOpenShopNode = [&](UObject* nodeObject, const std::string& nodeName)
         {
@@ -798,6 +807,37 @@ namespace Palworld {
             }
         };
 
+        auto classifyOpenPalShopNode = [&](UObject* nodeObject, const std::string& nodeName)
+        {
+            openPalShopNodes.push_back(nodeName);
+
+            // Empirical mapping:
+            // - default/0 tab => buy shop
+            // - 1 tab         => sell shop
+            int32_t tabValue = 0;
+            bool hasTabValue = false;
+
+            if (auto* tabPtr8 = Palworld::PropertyHelper::GetValuePtrByPropertyNameInChain<uint8_t>(nodeObject, STR("OpenPalShopTabType")))
+            {
+                tabValue = static_cast<int32_t>(*tabPtr8);
+                hasTabValue = true;
+            }
+            else if (auto* tabPtr32 = Palworld::PropertyHelper::GetValuePtrByPropertyNameInChain<int32_t>(nodeObject, STR("OpenPalShopTabType")))
+            {
+                tabValue = *tabPtr32;
+                hasTabValue = true;
+            }
+
+            if (hasTabValue && tabValue == 1)
+            {
+                openPalShopSellNodes.push_back(nodeName);
+            }
+            else
+            {
+                openPalShopBuyNodes.push_back(nodeName);
+            }
+        };
+
         auto classifyNode = [&](UObject* nodeObject)
         {
             const auto nodeName = RC::to_string(nodeObject->GetName());
@@ -807,6 +847,10 @@ namespace Palworld {
             const auto hasMsgIdList = nodeObject->GetPropertyByNameInChain(STR("MsgIdList")) != nullptr;
             const auto hasChoiceMsgIdList = nodeObject->GetPropertyByNameInChain(STR("ChoiceMsgIDList")) != nullptr;
             const auto hasOpenItemShopTabType = nodeObject->GetPropertyByNameInChain(STR("OpenItemShopTabType")) != nullptr;
+            const auto hasOpenPalShopTabType = nodeObject->GetPropertyByNameInChain(STR("OpenPalShopTabType")) != nullptr;
+            const auto hasGetItemList = nodeObject->GetPropertyByNameInChain(STR("GetItemList")) != nullptr;
+            const auto hasLotteryDataTable = nodeObject->GetPropertyByNameInChain(STR("LotteryDataTable")) != nullptr;
+            const auto hasOutputPins = nodeObject->GetPropertyByNameInChain(STR("OutputPins")) != nullptr;
 
             if (className.contains("FlowNode_Start") || nodeName.starts_with("FlowNode_Start"))
             {
@@ -823,6 +867,18 @@ namespace Palworld {
             else if (className.contains("FNBP_OpenItemShop_C") || hasOpenItemShopTabType)
             {
                 classifyOpenShopNode(nodeObject, nodeName);
+            }
+            else if (className.contains("FNBP_OpenPalShop_C") || hasOpenPalShopTabType)
+            {
+                classifyOpenPalShopNode(nodeObject, nodeName);
+            }
+            else if (className.contains("FNBP_GetItem_C") || hasGetItemList || hasLotteryDataTable)
+            {
+                getItemNodes.push_back(nodeName);
+            }
+            else if (className.contains("FNBP_NPCTalkCountBranch_C") || hasOutputPins)
+            {
+                talkCountBranchNodes.push_back(nodeName);
             }
         };
 
@@ -867,6 +923,11 @@ namespace Palworld {
         SortNodeNamesBySuffix(openItemShopNodes);
         SortNodeNamesBySuffix(openItemShopBuyNodes);
         SortNodeNamesBySuffix(openItemShopSellNodes);
+        SortNodeNamesBySuffix(openPalShopNodes);
+        SortNodeNamesBySuffix(openPalShopBuyNodes);
+        SortNodeNamesBySuffix(openPalShopSellNodes);
+        SortNodeNamesBySuffix(getItemNodes);
+        SortNodeNamesBySuffix(talkCountBranchNodes);
 
         // Pre-analysis: determine required node counts from JSON (respecting optional "Type" field)
         // and spawn any shortfall directly into the clone before the capacity checks run.
@@ -875,6 +936,10 @@ namespace Palworld {
             size_t neededChoiceNodes = 0;
             size_t neededBuyShopNodes = 0;
             size_t neededSellShopNodes = 0;
+            size_t neededBuyPalShopNodes = 0;
+            size_t neededSellPalShopNodes = 0;
+            size_t neededGetItemNodes = 0;
+            size_t neededTalkCountBranchNodes = 0;
             bool willNeedExitSpare = false;
 
             for (const auto& [logicalId, nodeDef] : ConversationNodes.items())
@@ -892,6 +957,30 @@ namespace Palworld {
                     continue;
                 }
 
+                if (typeStr == "PalShopBuy")
+                {
+                    ++neededBuyPalShopNodes;
+                    continue;
+                }
+
+                if (typeStr == "PalShopSell")
+                {
+                    ++neededSellPalShopNodes;
+                    continue;
+                }
+
+                if (typeStr == "GetItem")
+                {
+                    ++neededGetItemNodes;
+                    continue;
+                }
+
+                if (typeStr == "TalkCountBranch")
+                {
+                    ++neededTalkCountBranchNodes;
+                    continue;
+                }
+
                 ++neededMessageNodes;
 
                 const auto hasButtons = nodeDef.contains("Buttons") && nodeDef.at("Buttons").is_object();
@@ -902,7 +991,7 @@ namespace Palworld {
                     if (typeStr == "CustomChoice") needsChoice = true;
                     else if (typeStr == "FixedMessage") needsChoice = false;
                     else throw std::runtime_error(std::format(
-                        "Conversation '{}': node '{}' has unknown Type '{}'. Supported: FixedMessage, CustomChoice, ItemShopBuy, ItemShopSell.",
+                        "Conversation '{}': node '{}' has unknown Type '{}'. Supported: FixedMessage, CustomChoice, ItemShopBuy, ItemShopSell, PalShopBuy, PalShopSell, GetItem, TalkCountBranch.",
                         OwnerId, logicalId, typeStr));
                 }
                 if (needsChoice) ++neededChoiceNodes;
@@ -968,9 +1057,64 @@ namespace Palworld {
                 nodesByName.emplace(nodeNameNarrow, newNode);
             }
 
+            spawnIdx = 0;
+            while (openPalShopBuyNodes.size() < neededBuyPalShopNodes)
+            {
+                const auto newName = std::format("FNBP_OpenPalShop_C_Buy_Spawned_{}", spawnIdx++);
+                auto* newNode = m_talkFlowCloneManager.SpawnNodeInClone(flowAsset, "FNBP_OpenPalShop_C", newName);
+                if (!newNode) break;
+
+                const auto nodeNameNarrow = RC::to_string(newNode->GetName());
+                openPalShopNodes.push_back(nodeNameNarrow);
+                openPalShopBuyNodes.push_back(nodeNameNarrow);
+                nodesByName.emplace(nodeNameNarrow, newNode);
+            }
+
+            spawnIdx = 0;
+            while (openPalShopSellNodes.size() < neededSellPalShopNodes)
+            {
+                const auto newName = std::format("FNBP_OpenPalShop_C_Sell_Spawned_{}", spawnIdx++);
+                auto* newNode = m_talkFlowCloneManager.SpawnNodeInClone(flowAsset, "FNBP_OpenPalShop_C", newName);
+                if (!newNode) break;
+
+                const auto nodeNameNarrow = RC::to_string(newNode->GetName());
+                openPalShopNodes.push_back(nodeNameNarrow);
+                openPalShopSellNodes.push_back(nodeNameNarrow);
+                nodesByName.emplace(nodeNameNarrow, newNode);
+            }
+
+            spawnIdx = 0;
+            while (getItemNodes.size() < neededGetItemNodes)
+            {
+                const auto newName = std::format("FNBP_GetItem_C_Spawned_{}", spawnIdx++);
+                auto* newNode = m_talkFlowCloneManager.SpawnNodeInClone(flowAsset, "FNBP_GetItem_C", newName);
+                if (!newNode) break;
+
+                const auto nodeNameNarrow = RC::to_string(newNode->GetName());
+                getItemNodes.push_back(nodeNameNarrow);
+                nodesByName.emplace(nodeNameNarrow, newNode);
+            }
+
+            spawnIdx = 0;
+            while (talkCountBranchNodes.size() < neededTalkCountBranchNodes)
+            {
+                const auto newName = std::format("FNBP_NPCTalkCountBranch_C_Spawned_{}", spawnIdx++);
+                auto* newNode = m_talkFlowCloneManager.SpawnNodeInClone(flowAsset, "FNBP_NPCTalkCountBranch_C", newName);
+                if (!newNode) break;
+
+                const auto nodeNameNarrow = RC::to_string(newNode->GetName());
+                talkCountBranchNodes.push_back(nodeNameNarrow);
+                nodesByName.emplace(nodeNameNarrow, newNode);
+            }
+
             SortNodeNamesBySuffix(openItemShopNodes);
             SortNodeNamesBySuffix(openItemShopBuyNodes);
             SortNodeNamesBySuffix(openItemShopSellNodes);
+            SortNodeNamesBySuffix(openPalShopNodes);
+            SortNodeNamesBySuffix(openPalShopBuyNodes);
+            SortNodeNamesBySuffix(openPalShopSellNodes);
+            SortNodeNamesBySuffix(getItemNodes);
+            SortNodeNamesBySuffix(talkCountBranchNodes);
         }
 
         const auto hasStartNode = !startNodes.empty();
@@ -987,7 +1131,7 @@ namespace Palworld {
         for (const auto& [logicalId, nodeDef] : ConversationNodes.items())
         {
             const auto typeStr = nodeDef.value("Type", std::string{});
-            if (typeStr != "ItemShopBuy" && typeStr != "ItemShopSell")
+            if (typeStr != "ItemShopBuy" && typeStr != "ItemShopSell" && typeStr != "PalShopBuy" && typeStr != "PalShopSell" && typeStr != "GetItem" && typeStr != "TalkCountBranch")
             {
                 ++nonShopLogicalNodes;
             }
@@ -1089,7 +1233,7 @@ namespace Palworld {
             const auto typeStr = nodeDef.value("Type", std::string{});
             logicalNodeType[logicalId] = typeStr;
 
-            if (typeStr == "ItemShopBuy" || typeStr == "ItemShopSell")
+            if (typeStr == "ItemShopBuy" || typeStr == "ItemShopSell" || typeStr == "PalShopBuy" || typeStr == "PalShopSell" || typeStr == "GetItem" || typeStr == "TalkCountBranch")
             {
                 logicalNeedsChoiceNode[logicalId] = false;
                 continue;
@@ -1125,8 +1269,16 @@ namespace Palworld {
         std::unordered_map<std::string, std::string> logicalToChoiceNode;
         std::vector<std::string> mappedBuyShopNodes;
         std::vector<std::string> mappedSellShopNodes;
+        std::vector<std::string> mappedBuyPalShopNodes;
+        std::vector<std::string> mappedSellPalShopNodes;
+        std::vector<std::pair<std::string, std::string>> mappedGetItemNodes;
+        std::vector<std::pair<std::string, std::string>> mappedTalkCountBranchNodes;
         size_t buyShopNodeIndex = 0;
         size_t sellShopNodeIndex = 0;
+        size_t buyPalShopNodeIndex = 0;
+        size_t sellPalShopNodeIndex = 0;
+        size_t getItemNodeIndex = 0;
+        size_t talkCountBranchNodeIndex = 0;
         size_t choiceNodeIndex = 0;
         size_t messageNodeIndex = 0;
         for (size_t i = 0; i < logicalOrder.size(); ++i)
@@ -1156,6 +1308,50 @@ namespace Palworld {
                 continue;
             }
 
+            if (typeStr == "PalShopBuy")
+            {
+                if (buyPalShopNodeIndex < openPalShopBuyNodes.size())
+                {
+                    const auto& nodeName = openPalShopBuyNodes[buyPalShopNodeIndex++];
+                    logicalToRuntimeNode[logicalId] = nodeName;
+                    mappedBuyPalShopNodes.push_back(nodeName);
+                }
+                continue;
+            }
+
+            if (typeStr == "PalShopSell")
+            {
+                if (sellPalShopNodeIndex < openPalShopSellNodes.size())
+                {
+                    const auto& nodeName = openPalShopSellNodes[sellPalShopNodeIndex++];
+                    logicalToRuntimeNode[logicalId] = nodeName;
+                    mappedSellPalShopNodes.push_back(nodeName);
+                }
+                continue;
+            }
+
+            if (typeStr == "GetItem")
+            {
+                if (getItemNodeIndex < getItemNodes.size())
+                {
+                    const auto& nodeName = getItemNodes[getItemNodeIndex++];
+                    logicalToRuntimeNode[logicalId] = nodeName;
+                    mappedGetItemNodes.emplace_back(logicalId, nodeName);
+                }
+                continue;
+            }
+
+            if (typeStr == "TalkCountBranch")
+            {
+                if (talkCountBranchNodeIndex < talkCountBranchNodes.size())
+                {
+                    const auto& nodeName = talkCountBranchNodes[talkCountBranchNodeIndex++];
+                    logicalToRuntimeNode[logicalId] = nodeName;
+                    mappedTalkCountBranchNodes.emplace_back(logicalId, nodeName);
+                }
+                continue;
+            }
+
             if (messageNodeIndex >= messageNodes.size())
             {
                 continue;
@@ -1181,6 +1377,7 @@ namespace Palworld {
         auto& nodePatches = patch["Nodes"];
         auto& textEntries = patch["Text"];
         auto& buttonEntries = patch["Buttons"];
+        int requiredFlowMaxTalkCount = 0;
         std::unordered_map<std::string, std::string> registeredTalkTextDefaults;
 
         auto registerTalkTextEntry = [&](nlohmann::json& targetEntries, const std::string& textId, const std::string& defaultText, const std::string& context)
@@ -1309,6 +1506,307 @@ namespace Palworld {
         {
             nodePatches[nodeName] = {
                 { "OpenItemShopTabType", "E_PalItemShopTabType::NewEnumerator1" }
+            };
+        }
+
+        for (const auto& nodeName : mappedBuyPalShopNodes)
+        {
+            nodePatches[nodeName] = {
+                { "OpenPalShopTabType", "E_PalItemShopTabType::NewEnumerator0" }
+            };
+        }
+
+        for (const auto& nodeName : mappedSellPalShopNodes)
+        {
+            nodePatches[nodeName] = {
+                { "OpenPalShopTabType", "E_PalItemShopTabType::NewEnumerator1" }
+            };
+        }
+
+        for (const auto& [logicalId, nodeName] : mappedGetItemNodes)
+        {
+            const auto& nodeDef = ConversationNodes.at(logicalId);
+            auto getItemPatch = nlohmann::json::object();
+
+            if (nodeDef.contains("NetworkInvokeName"))
+            {
+                if (!nodeDef.at("NetworkInvokeName").is_string())
+                {
+                    throw std::runtime_error(std::format(
+                        "Conversation '{}': GetItem node '{}' has non-string NetworkInvokeName.",
+                        OwnerId,
+                        logicalId
+                    ));
+                }
+
+                getItemPatch["NetworkInvokeName"] = nodeDef.at("NetworkInvokeName").get<std::string>();
+            }
+
+            if (nodeDef.contains("bSaveNetworkInvoke") || nodeDef.contains("SaveNetworkInvoke"))
+            {
+                const auto saveKey = nodeDef.contains("bSaveNetworkInvoke") ? "bSaveNetworkInvoke" : "SaveNetworkInvoke";
+                if (!nodeDef.at(saveKey).is_boolean())
+                {
+                    throw std::runtime_error(std::format(
+                        "Conversation '{}': GetItem node '{}' has non-boolean {}.",
+                        OwnerId,
+                        logicalId,
+                        saveKey
+                    ));
+                }
+
+                getItemPatch["bSaveNetworkInvoke"] = nodeDef.at(saveKey).get<bool>();
+            }
+
+            if (nodeDef.contains("LotteryDataTable"))
+            {
+                if (!nodeDef.at("LotteryDataTable").is_string())
+                {
+                    throw std::runtime_error(std::format(
+                        "Conversation '{}': GetItem node '{}' has non-string LotteryDataTable.",
+                        OwnerId,
+                        logicalId
+                    ));
+                }
+
+                getItemPatch["LotteryDataTable"] = nodeDef.at("LotteryDataTable").get<std::string>();
+            }
+
+            if (nodeDef.contains("GetItemList"))
+            {
+                if (!nodeDef.at("GetItemList").is_array())
+                {
+                    throw std::runtime_error(std::format(
+                        "Conversation '{}': GetItem node '{}' has non-array GetItemList.",
+                        OwnerId,
+                        logicalId
+                    ));
+                }
+
+                auto normalizedGetItemList = nlohmann::json::array();
+                for (const auto& itemEntry : nodeDef.at("GetItemList"))
+                {
+                    if (!itemEntry.is_object())
+                    {
+                        throw std::runtime_error(std::format(
+                            "Conversation '{}': GetItem node '{}' contains non-object entry in GetItemList.",
+                            OwnerId,
+                            logicalId
+                        ));
+                    }
+
+                    if (itemEntry.contains("ItemId") || itemEntry.contains("Count"))
+                    {
+                        if (!itemEntry.contains("ItemId") || !itemEntry.at("ItemId").is_string())
+                        {
+                            throw std::runtime_error(std::format(
+                                "Conversation '{}': GetItem node '{}' entry is missing string ItemId.",
+                                OwnerId,
+                                logicalId
+                            ));
+                        }
+
+                        if (!itemEntry.contains("Count") || !itemEntry.at("Count").is_number_integer())
+                        {
+                            throw std::runtime_error(std::format(
+                                "Conversation '{}': GetItem node '{}' entry is missing integer Count.",
+                                OwnerId,
+                                logicalId
+                            ));
+                        }
+
+                        normalizedGetItemList.push_back({
+                            { "Key", { { "Key", itemEntry.at("ItemId").get<std::string>() } } },
+                            { "Value", itemEntry.at("Count").get<int>() }
+                        });
+                        continue;
+                    }
+
+                    if (!itemEntry.contains("Key") || !itemEntry.contains("Value"))
+                    {
+                        throw std::runtime_error(std::format(
+                            "Conversation '{}': GetItem node '{}' entry must use either ItemId/Count or Key/Value format.",
+                            OwnerId,
+                            logicalId
+                        ));
+                    }
+
+                    normalizedGetItemList.push_back(itemEntry);
+                }
+
+                getItemPatch["GetItemList"] = std::move(normalizedGetItemList);
+            }
+
+            if (nodeDef.contains("LinkID"))
+            {
+                if (!nodeDef.at("LinkID").is_string())
+                {
+                    throw std::runtime_error(std::format(
+                        "Conversation '{}': GetItem node '{}' has non-string LinkID.",
+                        OwnerId,
+                        logicalId
+                    ));
+                }
+
+                const auto targetLogicalId = nodeDef.at("LinkID").get<std::string>();
+                auto targetIt = logicalToRuntimeNode.find(targetLogicalId);
+                if (targetIt == logicalToRuntimeNode.end())
+                {
+                    throw std::runtime_error(std::format(
+                        "Conversation '{}': GetItem node '{}' LinkID '{}' does not exist.",
+                        OwnerId,
+                        logicalId,
+                        targetLogicalId
+                    ));
+                }
+
+                getItemPatch["Connections"] = nlohmann::json::array({
+                    {
+                        { "Key", "Out" },
+                        { "Value", {
+                            { "NodeName", targetIt->second },
+                            { "PinName", "In" }
+                        } }
+                    }
+                });
+            }
+
+            if (!getItemPatch.empty())
+            {
+                nodePatches[nodeName] = std::move(getItemPatch);
+            }
+        }
+
+        for (const auto& [logicalId, nodeName] : mappedTalkCountBranchNodes)
+        {
+            const auto& nodeDef = ConversationNodes.at(logicalId);
+            auto countBranchPatch = nlohmann::json::object();
+            auto branchConnections = nlohmann::json::array();
+            std::vector<std::string> configuredBranchPins;
+            int maxTalkCount = 0;
+
+            auto addBranchLink = [&](const char* pinName, const std::string& targetLogicalId)
+            {
+                auto targetIt = logicalToRuntimeNode.find(targetLogicalId);
+                if (targetIt == logicalToRuntimeNode.end())
+                {
+                    throw std::runtime_error(std::format(
+                        "Conversation '{}': TalkCountBranch node '{}' link '{}' references unknown node '{}'.",
+                        OwnerId,
+                        logicalId,
+                        pinName,
+                        targetLogicalId
+                    ));
+                }
+
+                configuredBranchPins.emplace_back(pinName);
+
+                const auto pinAsString = std::string(pinName);
+                const auto isNumericPin = !pinAsString.empty() &&
+                    std::all_of(pinAsString.begin(), pinAsString.end(), [](unsigned char c) { return std::isdigit(c) != 0; });
+                if (isNumericPin)
+                {
+                    maxTalkCount = std::max(maxTalkCount, std::stoi(pinAsString));
+                }
+
+                branchConnections.push_back({
+                    { "Key", pinName },
+                    { "Value", {
+                        { "NodeName", targetIt->second },
+                        { "PinName", "In" }
+                    } }
+                });
+            };
+
+            if (nodeDef.contains("Routes"))
+            {
+                if (!nodeDef.at("Routes").is_object())
+                {
+                    throw std::runtime_error(std::format(
+                        "Conversation '{}': TalkCountBranch node '{}' has non-object Routes.",
+                        OwnerId,
+                        logicalId
+                    ));
+                }
+
+                for (const auto& [pinName, targetLogicalIdValue] : nodeDef.at("Routes").items())
+                {
+                    if (!targetLogicalIdValue.is_string())
+                    {
+                        throw std::runtime_error(std::format(
+                            "Conversation '{}': TalkCountBranch node '{}' route '{}' must be a string.",
+                            OwnerId,
+                            logicalId,
+                            pinName
+                        ));
+                    }
+
+                    addBranchLink(pinName.c_str(), targetLogicalIdValue.get<std::string>());
+                }
+            }
+            else
+            {
+                if (!nodeDef.contains("FirstLinkID") || !nodeDef.at("FirstLinkID").is_string())
+                {
+                    throw std::runtime_error(std::format(
+                        "Conversation '{}': TalkCountBranch node '{}' requires string FirstLinkID (or Routes object).",
+                        OwnerId,
+                        logicalId
+                    ));
+                }
+
+                if (!nodeDef.contains("RepeatLinkID") || !nodeDef.at("RepeatLinkID").is_string())
+                {
+                    throw std::runtime_error(std::format(
+                        "Conversation '{}': TalkCountBranch node '{}' requires string RepeatLinkID (or Routes object).",
+                        OwnerId,
+                        logicalId
+                    ));
+                }
+
+                const auto firstLinkId = nodeDef.at("FirstLinkID").get<std::string>();
+                const auto repeatLinkId = nodeDef.at("RepeatLinkID").get<std::string>();
+                const auto secondLinkId = (nodeDef.contains("SecondLinkID") && nodeDef.at("SecondLinkID").is_string())
+                    ? nodeDef.at("SecondLinkID").get<std::string>()
+                    : repeatLinkId;
+
+                addBranchLink("1", firstLinkId);
+                addBranchLink("2", secondLinkId);
+                addBranchLink("Loop", repeatLinkId);
+            }
+
+            if (!branchConnections.empty())
+            {
+                std::sort(configuredBranchPins.begin(), configuredBranchPins.end());
+                configuredBranchPins.erase(std::unique(configuredBranchPins.begin(), configuredBranchPins.end()), configuredBranchPins.end());
+
+                if (maxTalkCount > 0)
+                {
+                    requiredFlowMaxTalkCount = std::max(requiredFlowMaxTalkCount, maxTalkCount);
+                }
+
+                if (!configuredBranchPins.empty())
+                {
+                    countBranchPatch["OutputPins"] = nlohmann::json::array();
+                    for (const auto& pin : configuredBranchPins)
+                    {
+                        countBranchPatch["OutputPins"].push_back({
+                            { "PinName", pin },
+                            { "PinFriendlyName", pin },
+                            { "PinToolTip", "" }
+                        });
+                    }
+                }
+
+                countBranchPatch["Connections"] = std::move(branchConnections);
+                nodePatches[nodeName] = std::move(countBranchPatch);
+            }
+        }
+
+        if (requiredFlowMaxTalkCount > 0)
+        {
+            patch["AssetProperties"] = {
+                { "MaxTalkCount", requiredFlowMaxTalkCount }
             };
         }
 
@@ -1458,7 +1956,7 @@ namespace Palworld {
             const auto& nodeDef = ConversationNodes.at(logicalId);
             const auto& nodeType = logicalNodeType.at(logicalId);
 
-            if (nodeType == "ItemShopBuy" || nodeType == "ItemShopSell")
+            if (nodeType == "ItemShopBuy" || nodeType == "ItemShopSell" || nodeType == "PalShopBuy" || nodeType == "PalShopSell" || nodeType == "GetItem" || nodeType == "TalkCountBranch")
             {
                 // Pure target nodes: their routing is provided by incoming LinkID edges.
                 continue;
@@ -1492,8 +1990,8 @@ namespace Palworld {
                 if (nodeDef.contains("LinkID") && nodeDef.at("LinkID").is_string())
                 {
                     const auto targetLogicalId = nodeDef.at("LinkID").get<std::string>();
-                    auto targetIt = logicalToMessageNode.find(targetLogicalId);
-                    if (targetIt == logicalToMessageNode.end())
+                    auto targetIt = logicalToRuntimeNode.find(targetLogicalId);
+                    if (targetIt == logicalToRuntimeNode.end())
                     {
                         throw std::runtime_error(std::format(
                             "Conversation '{}': node-level LinkID '{}' in node '{}' does not exist.",
@@ -1649,6 +2147,11 @@ namespace Palworld {
             throw std::runtime_error("Each FlowPatches entry requires object field Nodes.");
         }
 
+        if (Patch.contains("AssetProperties") && !Patch.at("AssetProperties").is_object())
+        {
+            throw std::runtime_error("FlowPatches.AssetProperties must be an object when provided.");
+        }
+
         auto AssetPath = RC::to_generic_string(Patch.at("AssetPath").get<std::string>());
 
         bool allowGlobalPatch = false;
@@ -1677,6 +2180,39 @@ namespace Palworld {
         if (!FlowAsset)
         {
             return false;
+        }
+
+        if (Patch.contains("AssetProperties"))
+        {
+            for (auto& [PropertyName, PropertyValue] : Patch.at("AssetProperties").items())
+            {
+                auto PropertyNameWide = RC::to_generic_string(PropertyName);
+                auto* Property = FlowAsset->GetPropertyByNameInChain(PropertyNameWide.c_str());
+                if (!Property)
+                {
+                    Property = Palworld::PropertyHelper::GetPropertyByName(FlowAsset->GetClassPrivate(), PropertyNameWide);
+                }
+
+                if (!Property)
+                {
+                    PS::Log<LogLevel::Warning>(STR("Flow patch skipped unknown asset property {} on {}\n"), PropertyNameWide, FlowAsset->GetName());
+                    continue;
+                }
+
+                try
+                {
+                    Palworld::PropertyHelper::CopyJsonValueToContainer(FlowAsset, Property, PropertyValue);
+                }
+                catch (const std::exception& e)
+                {
+                    PS::Log<LogLevel::Warning>(
+                        STR("Flow patch skipped invalid asset property {} on {}: {}\n"),
+                        PropertyNameWide,
+                        FlowAsset->GetName(),
+                        RC::to_generic_string(e.what())
+                    );
+                }
+            }
         }
 
         TArray<UObject*> FlowNodeObjects;
