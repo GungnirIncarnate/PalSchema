@@ -88,6 +88,54 @@ namespace UECustom {
         return false;
     }
 
+    bool FScriptMapHelper::SetValueByKey(void* KeyPtrToSet, void* ValuePtrToSet, bool AddIfMissing)
+    {
+        auto Num = ScriptMap->Num();
+
+        if (Num < 0)
+        {
+            throw std::runtime_error("Failed to set TMap entry due to invalid ScriptMap.");
+        }
+
+        for (auto Index = 0; Index < Num; ++Index)
+        {
+            if (!ScriptMap->IsValidIndex(Index))
+            {
+                continue;
+            }
+
+            uint8* PairPtr = static_cast<uint8*>(ScriptMap->GetData(Index, MapLayout));
+            void* ExistingKeyPtr = PairPtr;
+            void* ExistingValuePtr = PairPtr + MapLayout.ValueOffset;
+
+            if (!KeyProperty->Identical(ExistingKeyPtr, KeyPtrToSet))
+            {
+                continue;
+            }
+
+            FMemory::Memcpy(ExistingValuePtr, ValuePtrToSet, ValueProperty->GetElementSize());
+            return true;
+        }
+
+        if (!AddIfMissing)
+        {
+            return false;
+        }
+
+        auto Index = ScriptMap->AddUninitialized(MapLayout);
+        uint8* PairPtr = static_cast<uint8*>(ScriptMap->GetData(Index, MapLayout));
+
+        void* NewKeyPtr = PairPtr;
+        void* NewValuePtr = PairPtr + MapLayout.ValueOffset;
+
+        KeyProperty->InitializeValue(NewKeyPtr);
+        ValueProperty->InitializeValue(NewValuePtr);
+
+        FMemory::Memcpy(NewKeyPtr, KeyPtrToSet, KeyProperty->GetElementSize());
+        FMemory::Memcpy(NewValuePtr, ValuePtrToSet, ValueProperty->GetElementSize());
+        return true;
+    }
+
     bool FScriptMapHelper::Remove(void* KeyToRemove)
     {
         auto Num = ScriptMap->Num();

@@ -1,0 +1,75 @@
+{
+    // Conversation-schema example.
+    // The loader compiles this into node patches + DT_NpcTalkText rows.
+    //
+    // Translation-friendly text fields:
+    //   node text    -> "DefaultMsg"  + optional "TextID"
+    //   button text  -> "DefaultText" + optional "TextID"
+    //
+    // If TextID is omitted, the loader generates a stable fallback ID.
+    // If TextID is provided, that exact row is written to DT_NpcTalkText,
+    // which means the translations folder can override it by ID.
+    //
+    // Node continuation patterns (all optional — pick the one that fits):
+    //
+    //   "Buttons": { "0": { "DefaultText": "...", "LinkID": "NodeId" }, ... }
+    //     Standard choice/single-button node. Each button needs DefaultText
+    //     and either LinkID (go to another node) or Action ("Shop" / "Exit").
+    //
+    //   "LinkID": "NodeId"    (at the NODE level, no Buttons)
+    //     FixedMessage that auto-chains directly to another node with no button UI.
+    //
+    //   (neither Buttons nor LinkID)
+    //     Terminal node — message plays, then the conversation ends.
+    //
+    // "Type" field (optional):
+    //   "FixedMessage"   — single outgoing connection  (default for 0-1 buttons)
+    //   "CustomChoice"   — choice-list UI attached      (default for 2+ buttons)
+    //   If omitted, inferred from button count.
+    //
+    // Nodes not already present in the source talkflow are automatically spawned
+    // into the clone at load time — no manual node count management required.
+    "Gun_TestNPC": {
+        "StartNode": "Greeting",
+        "Nodes": {
+            "Greeting": {
+                "Type": "CustomChoice",
+                "TextID": "GUN_TESTNPC_GREETING",
+                "DefaultMsg": "Welcome. Looking for spheres, gems, or materials?",
+                "Buttons": {
+                    "0": {
+                        "TextID": "GUN_TESTNPC_GREETING_MORE",
+                        "DefaultText": "More?",
+                        "LinkID": "Testing"
+                    },
+                    "1": {
+                        "TextID": "GUN_TESTNPC_GREETING_CHAT",
+                        "DefaultText": "Talk To Me...",
+                        "LinkID": "Conversation"
+                    },
+                    "2": {
+                        "TextID": "GUN_TESTNPC_GREETING_GO_AWAY",
+                        "DefaultText": "Go Away",
+                        "Action": "Exit"
+                    },
+                    "3": {
+                        "TextID": "GUN_TESTNPC_GREETING_SHOP",
+                        "DefaultText": "Let's Shop",
+                        "Action": "Shop"
+                    }
+                }
+            },
+            "Conversation": {
+                "Type": "FixedMessage",
+                "TextID": "GUN_TESTNPC_CONVERSATION",
+                "DefaultMsg": "Just wanna chat huh?",
+                "LinkID": "Testing"
+            },
+            "Testing": {
+                "Type": "FixedMessage",
+                "TextID": "GUN_TESTNPC_TESTING",
+                "DefaultMsg": "This is a second linked message"
+            }
+        }
+    }
+}

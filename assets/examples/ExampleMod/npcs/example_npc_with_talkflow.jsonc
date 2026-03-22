@@ -1,0 +1,12 @@
+{
+    // This assumes the NPC row already exists in DT_PalHumanParameter.
+    // Replace Novice_PalTimer_3 with the NPC CharacterId you want to target.
+    "Novice_PalTimer_3": {
+        "Name": "Bounty Informant",
+
+        // You can assign talkflow directly from the NPC json.
+        // (The talkflows folder can also assign this; if both are present,
+        // the talkflows folder assignment loads later and wins.)
+        "TalkFlowAssetPath": "/Game/Pal/Blueprint/FlowGraph/NPCTalkFlow/Graph/FABP_CommonBountyTrader.FABP_CommonBountyTrader"
+    }
+}
