@@ -23,8 +23,8 @@
     //     Terminal node — message plays, then the conversation ends.
     //
     // "Type" field (optional):
-    //   "FixedMessage"   — single outgoing connection  (default for 0-1 buttons)
-    //   "CustomChoice"   — choice-list UI attached      (default for 2+ buttons)
+    //   "FixedMessage"   — single outgoing connection 
+    //   "CustomChoice"   — choice-list UI attached
     //   If omitted, inferred from button count.
     //
     // Nodes not already present in the source talkflow are automatically spawned
@@ -56,6 +56,36 @@
                         "TextID": "GUN_TESTNPC_GREETING_SHOP",
                         "DefaultText": "Let's Shop",
                         "Action": "Shop"
+                    },
+                    "4": {
+                        "TextID": "GUN_TESTNPC_GREETING_BUY_ONLY",
+                        "DefaultText": "Show Item Shop Buy",
+                        "LinkID": "ItemShopBuyExample"
+                    },
+                    "5": {
+                        "TextID": "GUN_TESTNPC_GREETING_SELL_ONLY",
+                        "DefaultText": "Show Item Shop Sell",
+                        "LinkID": "ItemShopSellExample"
+                    },
+                    "6": {
+                        "TextID": "GUN_TESTNPC_GREETING_PAL_BUY",
+                        "DefaultText": "Show Pal Shop Buy",
+                        "LinkID": "PalShopBuyExample"
+                    },
+                    "7": {
+                        "TextID": "GUN_TESTNPC_GREETING_PAL_SELL",
+                        "DefaultText": "Show Pal Shop Sell",
+                        "LinkID": "PalShopSellExample"
+                    },
+                    "8": {
+                        "TextID": "GUN_TESTNPC_GREETING_REWARD",
+                        "DefaultText": "Claim Test Reward",
+                        "LinkID": "GetItemExample"
+                    },
+                    "9": {
+                        "TextID": "GUN_TESTNPC_GREETING_VISITS",
+                        "DefaultText": "Visit Counter Route",
+                        "LinkID": "VisitCountExample"
                     }
                 }
             },
@@ -69,6 +99,66 @@
                 "Type": "FixedMessage",
                 "TextID": "GUN_TESTNPC_TESTING",
                 "DefaultMsg": "This is a second linked message"
+            },
+            "ItemShopBuyExample": {
+                "Type": "ItemShopBuy"
+            },
+            "ItemShopSellExample": {
+                "Type": "ItemShopSell"
+            },
+            "PalShopBuyExample": {
+                "Type": "PalShopBuy"
+            },
+            "PalShopSellExample": {
+                "Type": "PalShopSell"
+            },
+            "GetItemExample": {
+                "Type": "GetItem",
+                "GetItemList": [
+                    {
+                        "ItemId": "PalSphere",
+                        "Count": 3
+                    },
+                    {
+                        "ItemId": "Eemerald",
+                        "Count": 1
+                    }
+                ],
+                "LinkID": "AfterReward"
+            },
+            "AfterReward": {
+                "Type": "FixedMessage",
+                "TextID": "GUN_TESTNPC_AFTER_REWARD",
+                "DefaultMsg": "Reward granted. Come back if you need another test route."
+            },
+            "VisitCountExample": {
+                "Type": "TalkCountBranch",
+                "Routes": {
+                    "1": "FirstVisit",
+                    "2": "SecondVisit",
+                    "3": "ThirdVisit",
+                    "Loop": "RepeatVisit"
+                }
+            },
+            "FirstVisit": {
+                "Type": "FixedMessage",
+                "TextID": "GUN_TESTNPC_FIRST_VISIT",
+                "DefaultMsg": "First time through the branch path."
+            },
+            "SecondVisit": {
+                "Type": "FixedMessage",
+                "TextID": "GUN_TESTNPC_SECOND_VISIT",
+                "DefaultMsg": "Second visit path selected."
+            },
+            "ThirdVisit": {
+                "Type": "FixedMessage",
+                "TextID": "GUN_TESTNPC_THIRD_VISIT",
+                "DefaultMsg": "Third visit path selected."
+            },
+            "RepeatVisit": {
+                "Type": "FixedMessage",
+                "TextID": "GUN_TESTNPC_REPEAT_VISIT",
+                "DefaultMsg": "Repeat visit path selected."
             }
         }
     }
