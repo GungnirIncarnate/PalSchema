@@ -94,16 +94,6 @@ namespace Palworld {
 
     void PalTalkFlowModLoader::LoadData(const nlohmann::json& Data)
     {
-        if (Data.contains("FlowPatches"))
-        {
-            ApplyFlowPatches(Data.at("FlowPatches"));
-        }
-
-        if (Data.contains("$flowPatches"))
-        {
-            ApplyFlowPatches(Data.at("$flowPatches"));
-        }
-
         if (!m_npcTalkFlowTable)
         {
             throw std::runtime_error("Failed to load talkflows: DT_NPCTalkFlow could not be found.");
@@ -184,7 +174,7 @@ namespace Palworld {
                 {
                     if (!RowData.at("Nodes").is_object())
                     {
-                        throw std::runtime_error(std::format("Nodes for '{}' must be an object mapping NodeName -> patch.", CharacterIdString));
+                        throw std::runtime_error(std::format("Nodes for '{}' must be an object mapping NodeId -> schema node definition.", CharacterIdString));
                     }
 
                     if (resolvedTalkFlowPath.empty())
@@ -206,25 +196,23 @@ namespace Palworld {
 
                     const auto& nodesPayload = RowData.at("Nodes");
 
-                    nlohmann::json perNpcPatch;
-                    if (IsConversationNodeSchema(nodesPayload))
+                    if (!IsConversationNodeSchema(nodesPayload))
                     {
-                        perNpcPatch = BuildConversationPatchFromSchema(CharacterIdString, nodesPayload, resolvedTalkFlowPath, preferredStartNode);
-                        if (perNpcPatch.contains("Text"))
-                        {
-                            AddOrEditTalkText(perNpcPatch.at("Text"));
-                        }
-
-                        if (perNpcPatch.contains("Buttons"))
-                        {
-                            AddOrEditTalkText(perNpcPatch.at("Buttons"));
-                        }
+                        throw std::runtime_error(std::format(
+                            "Nodes for '{}' must use conversation schema format. Raw node patches are no longer supported.",
+                            CharacterIdString
+                        ));
                     }
-                    else
+
+                    nlohmann::json perNpcPatch = BuildConversationPatchFromSchema(CharacterIdString, nodesPayload, resolvedTalkFlowPath, preferredStartNode);
+                    if (perNpcPatch.contains("Text"))
                     {
-                        perNpcPatch = nlohmann::json::object();
-                        perNpcPatch["AssetPath"] = RC::to_string(resolvedTalkFlowPath);
-                        perNpcPatch["Nodes"] = nodesPayload;
+                        AddOrEditTalkText(perNpcPatch.at("Text"));
+                    }
+
+                    if (perNpcPatch.contains("Buttons"))
+                    {
+                        AddOrEditTalkText(perNpcPatch.at("Buttons"));
                     }
 
                     if (!ApplySingleFlowPatch(perNpcPatch, true))
@@ -328,85 +316,6 @@ namespace Palworld {
     }
 
     namespace {
-        bool TryParseHexUint32(const std::string& text, uint32_t& outValue)
-        {
-            if (text.empty() || text.size() > 8)
-            {
-                return false;
-            }
-
-            uint32_t value = 0;
-            for (char c : text)
-            {
-                value <<= 4;
-                if (c >= '0' && c <= '9')
-                {
-                    value |= static_cast<uint32_t>(c - '0');
-                }
-                else if (c >= 'a' && c <= 'f')
-                {
-                    value |= static_cast<uint32_t>(c - 'a' + 10);
-                }
-                else if (c >= 'A' && c <= 'F')
-                {
-                    value |= static_cast<uint32_t>(c - 'A' + 10);
-                }
-                else
-                {
-                    return false;
-                }
-            }
-
-            outValue = value;
-            return true;
-        }
-
-        bool TryConvertGuidStringToObject(const std::string& guidText, nlohmann::json& outGuidObject)
-        {
-            std::array<std::string, 4> segments{};
-            size_t start = 0;
-            size_t segmentIndex = 0;
-            while (segmentIndex < segments.size())
-            {
-                auto end = guidText.find('-', start);
-                if (end == std::string::npos)
-                {
-                    end = guidText.size();
-                }
-
-                segments[segmentIndex] = guidText.substr(start, end - start);
-                ++segmentIndex;
-
-                if (end == guidText.size())
-                {
-                    break;
-                }
-
-                start = end + 1;
-            }
-
-            if (segmentIndex != 4 || start < guidText.size())
-            {
-                return false;
-            }
-
-            uint32_t values[4]{};
-            for (size_t i = 0; i < 4; ++i)
-            {
-                if (!TryParseHexUint32(segments[i], values[i]))
-                {
-                    return false;
-                }
-            }
-
-            outGuidObject = nlohmann::json::object();
-            outGuidObject["A"] = static_cast<uint64_t>(values[0]);
-            outGuidObject["B"] = static_cast<uint64_t>(values[1]);
-            outGuidObject["C"] = static_cast<uint64_t>(values[2]);
-            outGuidObject["D"] = static_cast<uint64_t>(values[3]);
-            return true;
-        }
-
         void NormalizeNodePatchForEngineTypes(nlohmann::json& NodePatch)
         {
             if (!NodePatch.is_object())
@@ -442,35 +351,6 @@ namespace Palworld {
                 }
             }
 
-            // Compatibility: allow compact GUID string in Connections.Value.NodeGuid.
-            if (NodePatch.contains("Connections") && NodePatch.at("Connections").is_array())
-            {
-                for (auto& connectionEntry : NodePatch.at("Connections"))
-                {
-                    if (!connectionEntry.is_object() || !connectionEntry.contains("Value"))
-                    {
-                        continue;
-                    }
-
-                    auto& valueEntry = connectionEntry["Value"];
-                    if (!valueEntry.is_object() || !valueEntry.contains("NodeGuid"))
-                    {
-                        continue;
-                    }
-
-                    auto& nodeGuidEntry = valueEntry["NodeGuid"];
-                    if (!nodeGuidEntry.is_string())
-                    {
-                        continue;
-                    }
-
-                    nlohmann::json guidObject{};
-                    if (TryConvertGuidStringToObject(nodeGuidEntry.get<std::string>(), guidObject))
-                    {
-                        nodeGuidEntry = std::move(guidObject);
-                    }
-                }
-            }
         }
 
         RC::StringType NormalizeNodeName(const RC::StringType& nodeName)
