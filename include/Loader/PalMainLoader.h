@@ -22,6 +22,7 @@ namespace PS {
 
 namespace Palworld {
     class UPalStaticItemDataTable;
+    class PalSpawnLoader;
 
 	class PalMainLoader {
 	public:
@@ -34,6 +35,7 @@ namespace Palworld {
 		void Initialize();
 	private:
         std::vector<std::unique_ptr<PalModLoaderBase>> m_loaders;
+        PalSpawnLoader* m_spawnLoader = nullptr;
 
         std::unique_ptr<PS::FileWatchWrapper> m_fileWatcher;
 

@@ -48,7 +48,7 @@ namespace Palworld {
             return;
         }
 
-        auto loaderPath = modPath / m_modFolderType;
+        auto loaderPath = ResolveLoaderPath(modPath);
         if (!fs::is_directory(loaderPath))
         {
             return;
@@ -133,6 +133,11 @@ namespace Palworld {
     }
 
     void PalModLoaderBase::OnSetup() {}
+
+    std::filesystem::path PalModLoaderBase::ResolveLoaderPath(const std::filesystem::path& modPath) const
+    {
+        return modPath / m_modFolderType;
+    }
 
     void PalModLoaderBase::OnLoad(const std::filesystem::path& loaderPath, const RC::StringType& modName, const EEngineLifecyclePhase& engineLifecyclePhase) {}
 

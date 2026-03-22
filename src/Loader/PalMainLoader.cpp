@@ -27,6 +27,7 @@
 #include "Loader/PalEnumLoader.h"
 #include "Loader/PalHelpGuideModLoader.h"
 #include "Loader/PalSpawnLoader.h"
+#include "Loader/PalTalkFlowModLoader.h"
 #include "Loader/PalMainLoader.h"
 #include "Misc/FileWatchWrapper.h"
 
@@ -199,6 +200,56 @@ namespace Palworld {
 
         GameInstanceInit_Hook = safetyhook::create_inline(GameInstanceInitPtr,
             reinterpret_cast<void*>(OnGameInstanceInit));
+
+        auto onLevelShownFunction = UECustom::UObjectGlobals::StaticFindObject<UFunction*>(
+            nullptr,
+            nullptr,
+            STR("/Script/Engine.WorldPartitionRuntimeLevelStreamingCell:OnLevelShown")
+        );
+        if (onLevelShownFunction)
+        {
+            onLevelShownFunction->RegisterPostHook([&](UnrealScriptFunctionCallableContext& Context, void* CustomData) {
+                if (!m_spawnLoader)
+                {
+                    return;
+                }
+
+                auto* cell = static_cast<UECustom::UWorldPartitionRuntimeLevelStreamingCell*>(Context.Context);
+                if (cell)
+                {
+                    m_spawnLoader->OnCellLoaded(cell);
+                }
+            });
+        }
+        else
+        {
+            PS::Log<LogLevel::Warning>(STR("Failed to hook WorldPartitionRuntimeLevelStreamingCell:OnLevelShown. Spawn loader may not process streamed cells.\n"));
+        }
+
+        auto onLevelHiddenFunction = UECustom::UObjectGlobals::StaticFindObject<UFunction*>(
+            nullptr,
+            nullptr,
+            STR("/Script/Engine.WorldPartitionRuntimeLevelStreamingCell:OnLevelHidden")
+        );
+        if (onLevelHiddenFunction)
+        {
+            onLevelHiddenFunction->RegisterPostHook([&](UnrealScriptFunctionCallableContext& Context, void* CustomData) {
+                if (!m_spawnLoader)
+                {
+                    return;
+                }
+
+                auto* cell = static_cast<UECustom::UWorldPartitionRuntimeLevelStreamingCell*>(Context.Context);
+                if (cell)
+                {
+                    m_spawnLoader->OnCellUnloaded(cell);
+                }
+            });
+        }
+        else
+        {
+            PS::Log<LogLevel::Warning>(STR("Failed to hook WorldPartitionRuntimeLevelStreamingCell:OnLevelHidden. Spawn loader may not clean streamed cells.\n"));
+        }
     }
 
     void PalMainLoader::CreateLoaders()
@@ -237,10 +288,14 @@ namespace Palworld {
         RegisterLoader(std::move(helpGuideLoader));
 
         auto spawnLoader = std::make_unique<PalSpawnLoader>();
+        m_spawnLoader = spawnLoader.get();
         RegisterLoader(std::move(spawnLoader));
 
         auto languageModLoader = std::make_unique<PalLanguageModLoader>();
         RegisterLoader(std::move(languageModLoader));
+
+        auto talkFlowModLoader = std::make_unique<PalTalkFlowModLoader>();
+        RegisterLoader(std::move(talkFlowModLoader));
     }
 
     void PalMainLoader::SetupAutoReload()

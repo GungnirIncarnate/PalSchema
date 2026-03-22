@@ -45,7 +45,6 @@ namespace Palworld {
 		RC::Unreal::UDataTable* m_npcNameTable = nullptr;
         RC::Unreal::UDataTable* m_palShortDescTable = nullptr;
         RC::Unreal::UDataTable* m_palLongDescTable = nullptr;
-		RC::Unreal::UDataTable* m_npcTalkFlowTable = nullptr;
 		RC::Unreal::UDataTable* m_itemShopLotteryDataTable = nullptr;
 		RC::Unreal::UDataTable* m_itemShopCreateDataTable = nullptr;
 		RC::Unreal::UDataTable* m_itemShopSettingDataTable = nullptr;

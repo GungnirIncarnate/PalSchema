@@ -10,6 +10,7 @@ project(${TARGET})
 file(GLOB SRC_FILES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/dllmain.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Loader/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Loader/TalkFlow/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Loader/Blueprint/PalBlueprintMod.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Loader/Spawner/PalListInfo.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Loader/Spawner/PalSpawnGroupListInfo.cpp"

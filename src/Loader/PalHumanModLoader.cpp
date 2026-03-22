@@ -13,7 +13,6 @@
 #include "SDK/Structs/Custom/FManagedStruct.h"
 #include "SDK/Structs/FPalCharacterIconDataRow.h"
 #include "SDK/Structs/FPalBPClassDataRow.h"
-#include "SDK/Structs/FPalNPCTalkFlowClassDataRow.h"
 #include "SDK/Structs/FPalItemShopLotteryDataRow.h"
 #include "SDK/Structs/FPalItemShopSettingDataRow.h"
 #include "Loader/PalHumanModLoader.h"
@@ -59,7 +58,6 @@ namespace Palworld {
             m_npcNameTable = GetDatatableByName("DT_HumanNameText");
             m_palShortDescTable = GetDatatableByName("DT_PalShortDescriptionText");
             m_palLongDescTable = GetDatatableByName("DT_PalLongDescriptionText");
-            m_npcTalkFlowTable = GetDatatableByName("DT_NPCTalkFlow");
             m_itemShopLotteryDataTable = GetDatatableByName("DT_ItemShopLotteryData");
             m_itemShopCreateDataTable = GetDatatableByName("DT_ItemShopCreateData");
             m_itemShopSettingDataTable = GetDatatableByName("DT_ItemShopSettingData");
@@ -362,10 +360,6 @@ namespace Palworld {
 
 	void PalHumanModLoader::AddShop(const RC::Unreal::FName& CharacterId, const nlohmann::json& Data)
 	{
-		if (!Data.contains("CanSell")) {
-			PS::Log<RC::LogLevel::Error>(STR("CanSell was not specified in {}, skipping shop entry.\n"), CharacterId.ToString());
-			return;
-		}
 		if (!Data.contains("ShopTableId")) {
 			PS::Log<RC::LogLevel::Error>(STR("ShopTableId was not specified in {}, skipping shop entry.\n"), CharacterId.ToString());
 			return;
@@ -376,10 +370,6 @@ namespace Palworld {
 		}
 		if (!Data.contains("Items")) {
 			PS::Log<RC::LogLevel::Error>(STR("Items was not specified in {}, skipping shop entry.\n"), CharacterId.ToString());
-			return;
-		}
-		if (!Data.at("CanSell").is_boolean()) {
-			PS::Log<RC::LogLevel::Error>(STR("CanSell in {} must be a boolean, skipping shop entry.\n"), CharacterId.ToString());
 			return;
 		}
 		if (!Data.at("ShopTableId").is_string()) {
@@ -396,32 +386,6 @@ namespace Palworld {
 		}
 
 		bool addSucceeded = true;
-
-		if (Data.at("CanSell").get<bool>()) {
-			FPalNPCTalkFlowClassDataRow NpcTalkFlowClassDataRow {STR("/Game/Pal/Blueprint/FlowGraph/NPCTalkFlow/Graph/FABP_CommonItemShop.FABP_CommonItemShop")};
-			if (m_npcTalkFlowTable)
-			{
-				m_npcTalkFlowTable->AddRow(CharacterId, NpcTalkFlowClassDataRow);
-				if (!m_npcTalkFlowTable->FindRowUnchecked(CharacterId)) addSucceeded = false;
-			}
-			else
-			{
-				PS::Log<RC::LogLevel::Warning>(STR("npcTalkFlowTable not found, skipping adding talk flow for {}\n"), CharacterId.ToString());
-				addSucceeded = false;
-			}
-		} else {
-			FPalNPCTalkFlowClassDataRow NpcTalkFlowClassDataRow {STR("/Game/Pal/Blueprint/FlowGraph/NPCTalkFlow/Graph/FABP_CommonItemShop_WithoutSell.FABP_CommonItemShop_WithoutSell")};
-			if (m_npcTalkFlowTable)
-			{
-				m_npcTalkFlowTable->AddRow(CharacterId, NpcTalkFlowClassDataRow);
-				if (!m_npcTalkFlowTable->FindRowUnchecked(CharacterId)) addSucceeded = false;
-			}
-			else
-			{
-				PS::Log<RC::LogLevel::Warning>(STR("npcTalkFlowTable not found, skipping adding talk flow for {}\n"), CharacterId.ToString());
-				addSucceeded = false;
-			}
-		}
 
 		auto ShopTableId = RC::to_generic_string(Data.at("ShopTableId").get<std::string>());
 		if (m_itemShopLotteryDataTable)
