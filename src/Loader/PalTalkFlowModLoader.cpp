@@ -101,11 +101,6 @@ namespace Palworld {
 
         for (auto& [CharacterIdString, RowData] : Data.items())
         {
-            if (CharacterIdString == "FlowPatches" || CharacterIdString == "$flowPatches")
-            {
-                continue;
-            }
-
             bool didWork = false;
             RC::StringType resolvedTalkFlowPath{};
             const auto characterId = RC::to_generic_string(CharacterIdString);
