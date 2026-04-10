@@ -36,8 +36,6 @@ namespace Palworld {
 
         void EditTranslations(const RC::Unreal::FName& CharacterId, const nlohmann::json& Data);
 
-		void AddShop(const RC::Unreal::FName& CharacterId, const nlohmann::json& properties);
-
 		RC::Unreal::UDataTable* m_humanDataTable = nullptr;
 		RC::Unreal::UDataTable* m_iconDataTable = nullptr;
 		RC::Unreal::UDataTable* m_palBpClassTable = nullptr;
@@ -45,8 +43,5 @@ namespace Palworld {
 		RC::Unreal::UDataTable* m_npcNameTable = nullptr;
         RC::Unreal::UDataTable* m_palShortDescTable = nullptr;
         RC::Unreal::UDataTable* m_palLongDescTable = nullptr;
-		RC::Unreal::UDataTable* m_itemShopLotteryDataTable = nullptr;
-		RC::Unreal::UDataTable* m_itemShopCreateDataTable = nullptr;
-		RC::Unreal::UDataTable* m_itemShopSettingDataTable = nullptr;
 	};
 }

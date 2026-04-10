@@ -13,8 +13,6 @@
 #include "SDK/Structs/Custom/FManagedStruct.h"
 #include "SDK/Structs/FPalCharacterIconDataRow.h"
 #include "SDK/Structs/FPalBPClassDataRow.h"
-#include "SDK/Structs/FPalItemShopLotteryDataRow.h"
-#include "SDK/Structs/FPalItemShopSettingDataRow.h"
 #include "Loader/PalHumanModLoader.h"
 
 using namespace RC;
@@ -58,9 +56,6 @@ namespace Palworld {
             m_npcNameTable = GetDatatableByName("DT_HumanNameText");
             m_palShortDescTable = GetDatatableByName("DT_PalShortDescriptionText");
             m_palLongDescTable = GetDatatableByName("DT_PalLongDescriptionText");
-            m_itemShopLotteryDataTable = GetDatatableByName("DT_ItemShopLotteryData");
-            m_itemShopCreateDataTable = GetDatatableByName("DT_ItemShopCreateData");
-            m_itemShopSettingDataTable = GetDatatableByName("DT_ItemShopSettingData");
         }
         catch (const std::exception& e)
         {
@@ -109,10 +104,6 @@ namespace Palworld {
             else if (key == "Loot")
             {
                 AddLoot(CharacterId, value);
-            }
-            else if (key == "Shop")
-            {
-                AddShop(CharacterId, value);
             }
             else
             {
@@ -358,145 +349,4 @@ namespace Palworld {
 
 	}
 
-	void PalHumanModLoader::AddShop(const RC::Unreal::FName& CharacterId, const nlohmann::json& Data)
-	{
-		if (!Data.contains("ShopTableId")) {
-			PS::Log<RC::LogLevel::Error>(STR("ShopTableId was not specified in {}, skipping shop entry.\n"), CharacterId.ToString());
-			return;
-		}
-		if (!Data.contains("Currency")) {
-			PS::Log<RC::LogLevel::Error>(STR("Currency was not specified in {}, skipping shop entry.\n"), CharacterId.ToString());
-			return;
-		}
-		if (!Data.contains("Items")) {
-			PS::Log<RC::LogLevel::Error>(STR("Items was not specified in {}, skipping shop entry.\n"), CharacterId.ToString());
-			return;
-		}
-		if (!Data.at("ShopTableId").is_string()) {
-			PS::Log<RC::LogLevel::Error>(STR("ShopTableId in {} must be a string, skipping shop entry.\n"), CharacterId.ToString());
-			return;
-		}
-		if (!Data.at("Currency").is_string()) {
-			PS::Log<RC::LogLevel::Error>(STR("Currency in {} must be a string, skipping shop entry.\n"), CharacterId.ToString());
-			return;
-		}
-		if (!Data.at("Items").is_array()) {
-			PS::Log<RC::LogLevel::Error>(STR("Items in {} must be an array, skipping shop entry.\n"), CharacterId.ToString());
-			return;
-		}
-
-		bool addSucceeded = true;
-
-		auto ShopTableId = RC::to_generic_string(Data.at("ShopTableId").get<std::string>());
-		if (m_itemShopLotteryDataTable)
-		{
-			FPalItemShopLotteryEntry entry{};
-			entry.ShopGroupName = CharacterId;
-			entry.Weight = 100;
-
-			FPalItemShopLotteryDataRow row{};
-			row.lotteryDataArray.Add(entry);
-
-			m_itemShopLotteryDataTable->AddRow(FName(ShopTableId, FNAME_Add), row);
-			if (!m_itemShopLotteryDataTable->FindRowUnchecked(FName(ShopTableId, FNAME_Add))) addSucceeded = false;
-		}
-		else
-		{
-			PS::Log<RC::LogLevel::Warning>(STR("ItemShopLotteryDataTable not found, skipping adding lottery row for {}\n"), CharacterId.ToString());
-			addSucceeded = false;
-		}
-		if (m_itemShopCreateDataTable)
-		{
-			auto CreateRowJson = nlohmann::json::object();
-			CreateRowJson["productDataArray"] = Data.at("Items");
-
-			auto ExistingCreateRow = m_itemShopCreateDataTable->FindRowUnchecked(CharacterId);
-			auto CreateRowStruct = m_itemShopCreateDataTable->GetRowStruct().Get();
-			if (ExistingCreateRow)
-			{
-				try
-				{
-                    for (FProperty* Property : TFieldRange<FProperty>(CreateRowStruct, EFieldIterationFlags::IncludeSuper))
-                    {
-                        auto PropertyName = RC::to_string(Property->GetName());
-                        if (CreateRowJson.contains(PropertyName))
-                        {
-                            PropertyHelper::CopyJsonValueToContainer(ExistingCreateRow, Property, CreateRowJson.at(PropertyName));
-                        }
-                    }
-					if (!m_itemShopCreateDataTable->FindRowUnchecked(CharacterId)) addSucceeded = false;
-				}
-				catch (const std::exception& e)
-				{
-					PS::Log<RC::LogLevel::Error>(STR("Failed to modify Row '{}' in {}: {}\n"), CharacterId.ToString(), m_itemShopCreateDataTable->GetFullName(), RC::to_generic_string(e.what()));
-					addSucceeded = false;
-				}
-			}
-			else
-			{
-				FManagedStruct CreateRowData{ CreateRowStruct };
-				try
-				{
-                    for (FProperty* Property : TFieldRange<FProperty>(CreateRowStruct, EFieldIterationFlags::IncludeSuper))
-                    {
-                        auto PropertyName = RC::to_string(Property->GetName());
-                        if (CreateRowJson.contains(PropertyName))
-                        {
-                            PropertyHelper::CopyJsonValueToContainer(CreateRowData.GetData(), Property, CreateRowJson.at(PropertyName));
-                        }
-                    }
-					m_itemShopCreateDataTable->AddRow(CharacterId, *reinterpret_cast<RC::Unreal::FTableRowBase*>(CreateRowData.GetData()));
-					if (!m_itemShopCreateDataTable->FindRowUnchecked(CharacterId)) addSucceeded = false;
-				}
-				catch (const std::exception& e)
-				{
-					PS::Log<RC::LogLevel::Error>(STR("Failed to add Row '{}' to {}: {}\n"), CharacterId.ToString(), m_itemShopCreateDataTable->GetFullName(), RC::to_generic_string(e.what()));
-					addSucceeded = false;
-				}
-			}
-		}
-		else
-		{
-			PS::Log<RC::LogLevel::Warning>(STR("ItemShopCreateDataTable not found, skipping adding create-data row for {}\n"), CharacterId.ToString());
-			addSucceeded = false;
-		}
-		if (m_itemShopSettingDataTable)
-		{
-			auto CurrencyStr = RC::to_generic_string(Data.at("Currency").get<std::string>());
-			FPalItemShopSettingDataRow settingRow{ CurrencyStr };
-
-			auto ExistingRow = m_itemShopSettingDataTable->FindRowUnchecked(CharacterId);
-			if (ExistingRow)
-			{
-				auto RowStruct = m_itemShopSettingDataTable->GetRowStruct().Get();
-				auto CurrencyProp = RowStruct->GetPropertyByName(STR("CurrencyItemID"));
-				if (CurrencyProp)
-				{
-					PropertyHelper::CopyJsonValueToContainer(ExistingRow, CurrencyProp, CurrencyStr);
-				}
-				else
-				{
-					PS::Log<RC::LogLevel::Warning>(STR("CurrencyItemID property not found in ItemShopSettingData row struct, skipping update for {}\n"), CharacterId.ToString());
-				}
-				if (!m_itemShopSettingDataTable->FindRowUnchecked(CharacterId)) addSucceeded = false;
-			}
-			else
-			{
-				m_itemShopSettingDataTable->AddRow(CharacterId, settingRow);
-				if (!m_itemShopSettingDataTable->FindRowUnchecked(CharacterId)) addSucceeded = false;
-			}
-		}
-		else
-		{
-			PS::Log<RC::LogLevel::Warning>(STR("ItemShopSettingDataTable not found, skipping adding setting row for {}\n"), CharacterId.ToString());
-			addSucceeded = false;
-		}
-
-		if (addSucceeded)
-		{
-			PS::Log<RC::LogLevel::Normal>(STR("Added shop for {} (ShopTableId: {})\n"), CharacterId.ToString(), ShopTableId);
-		} else {
-			PS::Log<RC::LogLevel::Error>(STR("Failed to fully add shop for {} (ShopTableId: {}) - some parts were not added correctly.\n"), CharacterId.ToString(), ShopTableId);
-		}
-	}
 }

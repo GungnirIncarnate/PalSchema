@@ -27,6 +27,7 @@
 #include "Loader/PalEnumLoader.h"
 #include "Loader/PalHelpGuideModLoader.h"
 #include "Loader/PalSpawnLoader.h"
+#include "Loader/PalVenderDataModLoader.h"
 #include "Loader/PalTalkFlowModLoader.h"
 #include "Loader/PalMainLoader.h"
 #include "Misc/FileWatchWrapper.h"
@@ -246,6 +247,9 @@ namespace Palworld {
 
         auto humanModLoader = std::make_unique<PalHumanModLoader>();
         RegisterLoader(std::move(humanModLoader));
+
+        auto venderDataModLoader = std::make_unique<PalVenderDataModLoader>();
+        RegisterLoader(std::move(venderDataModLoader));
 
         auto itemModLoader = std::make_unique<PalItemModLoader>();
         RegisterLoader(std::move(itemModLoader));
