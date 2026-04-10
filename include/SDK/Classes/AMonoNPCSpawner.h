@@ -2,6 +2,10 @@
 
 #include "Unreal/AActor.hpp"
 
+namespace RC::Unreal {
+    class UObject;
+}
+
 namespace Palworld {
     class AMonoNPCSpawner : public RC::Unreal::AActor {
     public:
@@ -13,6 +17,8 @@ namespace Palworld {
 
         RC::Unreal::FName& GetOtomoName();
 
-        void Spawn();
+        RC::Unreal::UObject* GetSpawnedHandle();
+
+        RC::Unreal::AActor* TryGetSpawnedCharacter();
     };
 }
