@@ -13,8 +13,8 @@
     // Node continuation patterns (all optional — pick the one that fits):
     //
     //   "Buttons": { "0": { "DefaultText": "...", "LinkID": "NodeId" }, ... }
-    //     Standard choice/single-button node. Each button needs DefaultText
-    //     and either LinkID (go to another node) or Action ("Shop" / "Exit").
+    //     Standard choice/single-button node. Each button uses LinkID to
+    //     route to another logical node.
     //
     //   "LinkID": "NodeId"    (at the NODE level, no Buttons)
     //     FixedMessage that auto-chains directly to another node with no button UI.
@@ -50,12 +50,12 @@
                     "2": {
                         "TextID": "GUN_TESTNPC_GREETING_GO_AWAY",
                         "DefaultText": "Go Away",
-                        "Action": "Exit"
+                        "LinkID": "ExitMessage"
                     },
                     "3": {
                         "TextID": "GUN_TESTNPC_GREETING_SHOP",
                         "DefaultText": "Let's Shop",
-                        "Action": "Shop"
+                        "LinkID": "ItemShopBuyExample"
                     },
                     "4": {
                         "TextID": "GUN_TESTNPC_GREETING_BUY_ONLY",
@@ -130,6 +130,11 @@
                 "Type": "FixedMessage",
                 "TextID": "GUN_TESTNPC_AFTER_REWARD",
                 "DefaultMsg": "Reward granted. Come back if you need another test route."
+            },
+            "ExitMessage": {
+                "Type": "FixedMessage",
+                "TextID": "GUN_TESTNPC_EXIT",
+                "DefaultMsg": "See you next time."
             },
             "VisitCountExample": {
                 "Type": "TalkCountBranch",
