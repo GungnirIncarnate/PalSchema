@@ -68,6 +68,7 @@ namespace Palworld {
         void TryResolvePendingMonoNpcSpawners();
         PS::SpawnerInfo* FindSpawnerInfoBySpawnerActor(RC::Unreal::AActor* spawnerActor);
         RC::Unreal::UClass* ResolveComponentClass(const RC::StringType& configuredName);
+        void ApplyConfiguredComponentProperties(RC::Unreal::UObject* componentInstance, const nlohmann::json& properties);
         void AttachConfiguredComponents(RC::Unreal::AActor* resolvedNpc, const PS::SpawnerInfo& spawnerInfo);
         void CreateSpawner(UECustom::UWorldPartitionRuntimeLevelStreamingCell* cell, PS::SpawnerInfo& spawnerInfo);
         void SpawnMonoNPC(UECustom::UWorldPartitionRuntimeLevelStreamingCell* cell, PS::SpawnerInfo& spawnerInfo);

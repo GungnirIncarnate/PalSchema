@@ -5,7 +5,7 @@
 #include "Unreal/Rotator.hpp"
 #include "SDK/Structs/Guid.h"
 #include "Loader/Spawner/PalSpawnGroupListInfo.h"
-#include "nlohmann/json_fwd.hpp"
+#include "nlohmann/json.hpp"
 
 namespace RC::Unreal {
     class UWorld;
@@ -17,6 +17,12 @@ namespace UECustom {
 
 namespace PS {
     class AMonoNPCSpawner;
+
+    struct AddedComponentInfo
+    {
+        RC::StringType ComponentPath{};
+        nlohmann::json Properties = nlohmann::json::object();
+    };
 
     enum class SpawnerType : RC::Unreal::uint8 {
         Undefined,
@@ -42,7 +48,7 @@ namespace PS {
         int Level = 1;
         RC::Unreal::FName NPCID = RC::Unreal::NAME_None;
         RC::Unreal::FName OtomoName = RC::Unreal::NAME_None;
-        std::vector<RC::StringType> AddComponents;
+        std::vector<PS::AddedComponentInfo> AddComponents;
 
         // Sheet
 

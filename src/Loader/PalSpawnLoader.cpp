@@ -15,11 +15,13 @@
 #include "SDK/Classes/KismetSystemLibrary.h"
 #include "SDK/Classes/Custom/UObjectGlobals.h"
 #include "SDK/Classes/Custom/DataTable/TableSerializer.h"
+#include "SDK/Helper/PropertyHelper.h"
 #include "Utility/Logging.h"
 #include "Utility/EnumHelpers.h"
 #include "Utility/JsonHelpers.h"
 #include "Loader/PalSpawnLoader.h"
 #include "SDK/PalSignatures.h"
+#include <cctype>
 
 using namespace RC;
 using namespace RC::Unreal;
@@ -335,23 +337,49 @@ namespace Palworld {
             auto& addComponents = value.at("AddComponents");
             if (!addComponents.is_array())
             {
-                throw std::runtime_error("AddComponents must be an array of strings.");
+                throw std::runtime_error("AddComponents must be an array.");
             }
 
             for (auto& item : addComponents)
             {
-                if (!item.is_string())
+                std::string componentName;
+                nlohmann::json componentProperties = nlohmann::json::object();
+
+                if (item.is_string())
                 {
-                    throw std::runtime_error("AddComponents entries must be strings.");
+                    componentName = item.get<std::string>();
+                }
+                else if (item.is_object())
+                {
+                    if (!item.contains("ComponentPath") || !item.at("ComponentPath").is_string())
+                    {
+                        throw std::runtime_error("AddComponents object entries must include a string field named ComponentPath.");
+                    }
+
+                    componentName = item.at("ComponentPath").get<std::string>();
+
+                    if (item.contains("Properties"))
+                    {
+                        if (!item.at("Properties").is_object())
+                        {
+                            throw std::runtime_error("AddComponents.Properties must be an object.");
+                        }
+
+                        componentProperties = item.at("Properties");
+                    }
+                }
+                else
+                {
+                    throw std::runtime_error("AddComponents entries must be either strings or objects.");
                 }
 
-                auto componentName = item.get<std::string>();
                 // Be tolerant of accidental whitespace in JSON values.
                 const auto firstNonSpace = componentName.find_first_not_of(" \t\r\n");
                 if (firstNonSpace == std::string::npos)
                 {
                     continue;
                 }
+
                 const auto lastNonSpace = componentName.find_last_not_of(" \t\r\n");
                 componentName = componentName.substr(firstNonSpace, lastNonSpace - firstNonSpace + 1);
 
@@ -365,7 +393,7 @@ namespace Palworld {
                     throw std::runtime_error("AddComponents entries must be full asset paths, e.g. /Game/.../BP_ComponentName or /Game/.../BP_ComponentName.BP_ComponentName_C");
                 }
 
-                spawnerInfo.AddComponents.push_back(RC::to_generic_string(componentName));
+                spawnerInfo.AddComponents.push_back({ RC::to_generic_string(componentName), std::move(componentProperties) });
             }
         }
     }
@@ -578,23 +606,23 @@ namespace Palworld {
 
         for (auto& configuredComponent : spawnerInfo.AddComponents)
         {
-            auto* componentClass = ResolveComponentClass(configuredComponent);
+            auto* componentClass = ResolveComponentClass(configuredComponent.ComponentPath);
             if (!componentClass)
             {
-                PS::Log<LogLevel::Warning>(STR("Failed to resolve component class from '{}'. Tried path lookup and blocking preload; skipping component attachment.\n"), configuredComponent);
+                PS::Log<LogLevel::Warning>(STR("Failed to resolve component class from '{}'. Tried path lookup and blocking preload; skipping component attachment.\n"), configuredComponent.ComponentPath);
                 continue;
             }
 
             if (actorComponentBaseClass && !componentClass->IsChildOf(actorComponentBaseClass))
             {
-                PS::Log<LogLevel::Warning>(STR("Resolved class {} from '{}' is not an ActorComponent, skipping attachment to {}.\n"), componentClass->GetName(), configuredComponent, resolvedNpc->GetName());
+                PS::Log<LogLevel::Warning>(STR("Resolved class {} from '{}' is not an ActorComponent, skipping attachment to {}.\n"), componentClass->GetName(), configuredComponent.ComponentPath, resolvedNpc->GetName());
                 continue;
             }
 
             auto existingComponents = resolvedNpc->K2_GetComponentsByClass(componentClass);
             if (existingComponents.Num() > 0)
             {
-                PS::Log<LogLevel::Verbose>(STR("Skipping component {} on {} because an instance already exists.\n"), configuredComponent, resolvedNpc->GetName());
+                PS::Log<LogLevel::Verbose>(STR("Skipping component {} on {} because an instance already exists.\n"), configuredComponent.ComponentPath, resolvedNpc->GetName());
                 continue;
             }
 
@@ -629,12 +657,87 @@ namespace Palworld {
                     resolvedNpc->ProcessEvent(finishAddComponentFunction, &finishParams);
                 }
 
-                PS::Log<LogLevel::Normal>(STR("Attached component {} to resolved NPC {}.\n"), configuredComponent, resolvedNpc->GetName());
+                ApplyConfiguredComponentProperties(params.ReturnValue, configuredComponent.Properties);
+
+                PS::Log<LogLevel::Normal>(STR("Attached component {} to resolved NPC {}.\n"), configuredComponent.ComponentPath, resolvedNpc->GetName());
             }
             else
             {
-                PS::Log<LogLevel::Warning>(STR("AddComponentByClass returned null while attaching {} to {}.\n"), configuredComponent, resolvedNpc->GetName());
+                PS::Log<LogLevel::Warning>(STR("AddComponentByClass returned null while attaching {} to {}.\n"), configuredComponent.ComponentPath, resolvedNpc->GetName());
             }
+        }
+    }
+
+    void PalSpawnLoader::ApplyConfiguredComponentProperties(RC::Unreal::UObject* componentInstance, const nlohmann::json& properties)
+    {
+        if (!componentInstance || !properties.is_object() || properties.empty())
+        {
+            return;
+        }
+
+        auto findPropertyByNameLoose = [](RC::Unreal::UClass* classType, const std::string& requestedName) -> RC::Unreal::FProperty*
+        {
+            if (!classType)
+            {
+                return nullptr;
+            }
+
+            auto normalize = [](const std::string& value)
+            {
+                std::string lowered;
+                lowered.reserve(value.size());
+                for (unsigned char c : value)
+                {
+                    lowered.push_back(static_cast<char>(std::tolower(c)));
+                }
+                return lowered;
+            };
+
+            const auto requestedLower = normalize(requestedName);
+            RC::Unreal::FProperty* bestMatch = nullptr;
+
+            for (auto* property = classType->GetPropertyLink(); property != nullptr; property = property->GetPropertyLinkNext())
+            {
+                const auto propertyNameUtf8 = RC::to_string(property->GetName());
+                if (propertyNameUtf8 == requestedName)
+                {
+                    return property;
+                }
+
+                if (normalize(propertyNameUtf8) == requestedLower)
+                {
+                    bestMatch = property;
+                }
+            }
+
+            return bestMatch;
+        };
+
+        int successfulChanges = 0;
+        for (auto& [propertyName, propertyValue] : properties.items())
+        {
+            auto* property = findPropertyByNameLoose(componentInstance->GetClassPrivate(), propertyName);
+            if (!property)
+            {
+                PS::Log<LogLevel::Warning>(STR("Property '{}' does not exist on component {}.\n"), RC::to_generic_string(propertyName), componentInstance->GetName());
+                continue;
+            }
+
+            try
+            {
+                Palworld::PropertyHelper::CopyJsonValueToContainer(componentInstance, property, propertyValue);
+                ++successfulChanges;
+            }
+            catch (const std::exception& ex)
+            {
+                PS::Log<LogLevel::Warning>(STR("Failed to set component property '{}' on {}: {}\n"),
+                    RC::to_generic_string(propertyName), componentInstance->GetName(), RC::to_generic_string(ex.what()));
+            }
+        }
+
+        if (successfulChanges > 0)
+        {
+            PS::Log<LogLevel::Normal>(STR("Applied {} configured property change(s) to component {}.\n"), successfulChanges, componentInstance->GetName());
         }
     }
 
