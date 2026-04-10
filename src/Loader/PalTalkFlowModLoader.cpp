@@ -449,7 +449,8 @@ namespace Palworld {
                 nodeType == "ItemShopBuy" || nodeType == "ItemShopSell" ||
                 nodeType == "PalShopBuy" || nodeType == "PalShopSell" ||
                 nodeType == "GetItem" ||
-                nodeType == "TalkCountBranch");
+                nodeType == "TalkCountBranch" ||
+                nodeType == "NPCTalkBranchCount");
 
             if (isPureNodeType)
             {

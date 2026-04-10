@@ -1,4 +1,4 @@
-#include "Loader/TalkFlow/Nodes/TalkCountBranchNodePatchBuilder.h"
+#include "Loader/TalkFlow/Nodes/NPCTalkBranchCountNodePatchBuilder.h"
 
 #include <algorithm>
 #include <cctype>
@@ -7,15 +7,15 @@
 
 namespace Palworld::TalkFlow::Nodes
 {
-    void TalkCountBranchNodePatchBuilder::Build(
+    void NPCTalkBranchCountNodePatchBuilder::Build(
         const std::string& ownerId,
         const nlohmann::json& conversationNodes,
-        const std::vector<std::pair<std::string, std::string>>& mappedTalkCountBranchNodes,
+        const std::vector<std::pair<std::string, std::string>>& mappedNPCTalkBranchCountNodes,
         const std::unordered_map<std::string, std::string>& logicalToRuntimeNode,
         nlohmann::json& nodePatches,
         int& requiredFlowMaxTalkCount)
     {
-        for (const auto& [logicalId, nodeName] : mappedTalkCountBranchNodes)
+        for (const auto& [logicalId, nodeName] : mappedNPCTalkBranchCountNodes)
         {
             const auto& nodeDef = conversationNodes.at(logicalId);
             auto countBranchPatch = nlohmann::json::object();
@@ -29,7 +29,7 @@ namespace Palworld::TalkFlow::Nodes
                 if (targetIt == logicalToRuntimeNode.end())
                 {
                     throw std::runtime_error(std::format(
-                        "Conversation '{}': TalkCountBranch node '{}' link '{}' references unknown node '{}'.",
+                        "Conversation '{}': NPCTalkBranchCount node '{}' link '{}' references unknown node '{}'.",
                         ownerId,
                         logicalId,
                         pinName,
@@ -61,7 +61,7 @@ namespace Palworld::TalkFlow::Nodes
                 if (!nodeDef.at("Routes").is_object())
                 {
                     throw std::runtime_error(std::format(
-                        "Conversation '{}': TalkCountBranch node '{}' has non-object Routes.",
+                        "Conversation '{}': NPCTalkBranchCount node '{}' has non-object Routes.",
                         ownerId,
                         logicalId
                     ));
@@ -72,7 +72,7 @@ namespace Palworld::TalkFlow::Nodes
                     if (!targetLogicalIdValue.is_string())
                     {
                         throw std::runtime_error(std::format(
-                            "Conversation '{}': TalkCountBranch node '{}' route '{}' must be a string.",
+                            "Conversation '{}': NPCTalkBranchCount node '{}' route '{}' must be a string.",
                             ownerId,
                             logicalId,
                             pinName
@@ -87,7 +87,7 @@ namespace Palworld::TalkFlow::Nodes
                 if (!nodeDef.contains("FirstLinkID") || !nodeDef.at("FirstLinkID").is_string())
                 {
                     throw std::runtime_error(std::format(
-                        "Conversation '{}': TalkCountBranch node '{}' requires string FirstLinkID (or Routes object).",
+                        "Conversation '{}': NPCTalkBranchCount node '{}' requires string FirstLinkID (or Routes object).",
                         ownerId,
                         logicalId
                     ));
@@ -96,7 +96,7 @@ namespace Palworld::TalkFlow::Nodes
                 if (!nodeDef.contains("RepeatLinkID") || !nodeDef.at("RepeatLinkID").is_string())
                 {
                     throw std::runtime_error(std::format(
-                        "Conversation '{}': TalkCountBranch node '{}' requires string RepeatLinkID (or Routes object).",
+                        "Conversation '{}': NPCTalkBranchCount node '{}' requires string RepeatLinkID (or Routes object).",
                         ownerId,
                         logicalId
                     ));

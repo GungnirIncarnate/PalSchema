@@ -1,4 +1,6 @@
 #include "Loader/TalkFlow/Nodes/ConversationNodePatchBuilder.h"
+#include "Loader/TalkFlow/Nodes/CustomChoiceNodePatchBuilder.h"
+#include "Loader/TalkFlow/Nodes/FixedMessageNodePatchBuilder.h"
 
 #include "Helpers/String.hpp"
 #include "Utility/Logging.h"
@@ -324,7 +326,7 @@ namespace Palworld::TalkFlow::Nodes
             const auto& nodeDef = conversationNodes.at(logicalId);
             const auto& nodeType = logicalNodeType.at(logicalId);
 
-            if (nodeType == "ItemShopBuy" || nodeType == "ItemShopSell" || nodeType == "PalShopBuy" || nodeType == "PalShopSell" || nodeType == "GetItem" || nodeType == "TalkCountBranch")
+            if (nodeType == "ItemShopBuy" || nodeType == "ItemShopSell" || nodeType == "PalShopBuy" || nodeType == "PalShopSell" || nodeType == "GetItem" || nodeType == "TalkCountBranch" || nodeType == "NPCTalkBranchCount")
             {
                 continue;
             }
@@ -348,41 +350,18 @@ namespace Palworld::TalkFlow::Nodes
 
             auto messagePatch = nlohmann::json::object();
             messagePatch["MsgIdList"] = nlohmann::json::array({ msgId });
+            nodePatches[messageNodeName] = messagePatch;
 
             if (!needsChoiceNode)
             {
-                std::optional<std::string> targetNodeName;
-                if (nodeDef.contains("LinkID") && nodeDef.at("LinkID").is_string())
-                {
-                    const auto targetLogicalId = nodeDef.at("LinkID").get<std::string>();
-                    auto targetIt = logicalToRuntimeNode.find(targetLogicalId);
-                    if (targetIt == logicalToRuntimeNode.end())
-                    {
-                        throw std::runtime_error(std::format(
-                            "Conversation '{}': node-level LinkID '{}' in node '{}' does not exist.",
-                            ownerId, targetLogicalId, logicalId));
-                    }
-                    targetNodeName = targetIt->second;
-                }
-                else if (nodeDef.contains("Buttons") && nodeDef.at("Buttons").is_object() && !nodeDef.at("Buttons").empty())
-                {
-                    auto buttonIt = nodeDef.at("Buttons").items().begin();
-                    targetNodeName = resolveButtonTargetNode(logicalId, buttonIt.key(), buttonIt.value());
-                }
-
-                if (targetNodeName.has_value())
-                {
-                    messagePatch["Connections"] = nlohmann::json::array({
-                        {
-                            { "Key", "Out" },
-                            { "Value", {
-                                { "NodeName", targetNodeName.value() },
-                                { "PinName", "In" }
-                            } }
-                        }
-                    });
-                }
-                nodePatches[messageNodeName] = std::move(messagePatch);
+                FixedMessageNodePatchBuilder::Build(
+                    ownerId,
+                    logicalId,
+                    nodeDef,
+                    messageNodeName,
+                    logicalToRuntimeNode,
+                    resolveButtonTargetNode,
+                    nodePatches);
                 continue;
             }
 
@@ -394,12 +373,11 @@ namespace Palworld::TalkFlow::Nodes
                     RC::to_generic_string(ownerId),
                     RC::to_generic_string(logicalId)
                 );
-                nodePatches[messageNodeName] = std::move(messagePatch);
                 continue;
             }
 
             const auto& choiceNodeName = choiceNodeIt->second;
-            messagePatch["Connections"] = nlohmann::json::array({
+            nodePatches[messageNodeName]["Connections"] = nlohmann::json::array({
                 {
                     { "Key", "Out" },
                     { "Value", {
@@ -408,38 +386,25 @@ namespace Palworld::TalkFlow::Nodes
                     } }
                 }
             });
-            nodePatches[messageNodeName] = std::move(messagePatch);
 
-            auto choicePatch = nlohmann::json::object();
-            choicePatch["ChoiceMsgIDList"] = nlohmann::json::array();
-            choicePatch["OutputPins"] = nlohmann::json::array();
-            choicePatch["Connections"] = nlohmann::json::array();
-
-            for (const auto& [buttonId, buttonDef] : nodeDef.at("Buttons").items())
-            {
-                const auto buttonMsgId = resolveButtonTextId(logicalId, buttonId, buttonDef);
-                RegisterTalkTextEntry(registeredTalkTextDefaults, buttonEntries, ownerId, buttonMsgId, resolveButtonDefaultText(logicalId, buttonId, buttonDef), std::format("button '{}' in node '{}'", buttonId, logicalId));
-                choicePatch["ChoiceMsgIDList"].push_back(buttonMsgId);
-                choicePatch["OutputPins"].push_back({
-                    { "PinName", buttonMsgId },
-                    { "PinFriendlyName", buttonMsgId },
-                    { "PinToolTip", "" }
-                });
-
-                const auto targetNodeName = resolveButtonTargetNode(logicalId, buttonId, buttonDef);
-                if (targetNodeName.has_value())
+            CustomChoiceNodePatchBuilder::Build(
+                logicalId,
+                nodeDef,
+                choiceNodeName,
+                resolveButtonTextId,
+                resolveButtonDefaultText,
+                [&](const std::string& buttonMsgId, const std::string& defaultText)
                 {
-                    choicePatch["Connections"].push_back({
-                        { "Key", buttonMsgId },
-                        { "Value", {
-                            { "NodeName", targetNodeName.value() },
-                            { "PinName", "In" }
-                        } }
-                    });
-                }
-            }
-
-            nodePatches[choiceNodeName] = std::move(choicePatch);
+                    RegisterTalkTextEntry(
+                        registeredTalkTextDefaults,
+                        buttonEntries,
+                        ownerId,
+                        buttonMsgId,
+                        defaultText,
+                        std::format("button text registration in node '{}'", logicalId));
+                },
+                resolveButtonTargetNode,
+                nodePatches);
         }
 
         if (hasStartNode && !logicalOrder.empty())

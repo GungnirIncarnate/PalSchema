@@ -20,6 +20,6 @@ namespace Palworld::TalkFlow
         std::vector<std::string> OpenPalShopBuyNodes;
         std::vector<std::string> OpenPalShopSellNodes;
         std::vector<std::string> GetItemNodes;
-        std::vector<std::string> TalkCountBranchNodes;
+        std::vector<std::string> NPCTalkBranchCountNodes;
     };
 }

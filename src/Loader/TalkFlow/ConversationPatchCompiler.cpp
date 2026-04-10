@@ -1,10 +1,13 @@
 #include "Loader/TalkFlow/ConversationPatchCompiler.h"
 
 #include "Loader/TalkFlow/FlowNodeCatalogBuilder.h"
-#include "Loader/TalkFlow/Nodes/ConversationNodePatchBuilder.h"
 #include "Loader/TalkFlow/Nodes/GetItemNodePatchBuilder.h"
-#include "Loader/TalkFlow/Nodes/ShopNodePatchBuilder.h"
-#include "Loader/TalkFlow/Nodes/TalkCountBranchNodePatchBuilder.h"
+#include "Loader/TalkFlow/Nodes/ItemShopBuyNodePatchBuilder.h"
+#include "Loader/TalkFlow/Nodes/ItemShopSellNodePatchBuilder.h"
+#include "Loader/TalkFlow/Nodes/PalShopBuyNodePatchBuilder.h"
+#include "Loader/TalkFlow/Nodes/PalShopSellNodePatchBuilder.h"
+#include "Loader/TalkFlow/Nodes/NPCTalkBranchCountNodePatchBuilder.h"
+#include "Loader/TalkFlow/Nodes/ConversationNodePatchBuilder.h"
 #include "Loader/TalkFlowCloneManager.h"
 #include "Utility/Logging.h"
 
@@ -23,6 +26,11 @@ namespace Palworld::TalkFlow
 {
     namespace
     {
+        bool IsNPCTalkBranchCountType(const std::string& nodeType)
+        {
+            return nodeType == "TalkCountBranch" || nodeType == "NPCTalkBranchCount";
+        }
+
         int ExtractTrailingNumber(const std::string& text)
         {
             if (text.empty() || !std::isdigit(static_cast<unsigned char>(text.back())))
@@ -115,7 +123,7 @@ namespace Palworld::TalkFlow
         auto& openPalShopBuyNodes = nodeCatalog.OpenPalShopBuyNodes;
         auto& openPalShopSellNodes = nodeCatalog.OpenPalShopSellNodes;
         auto& getItemNodes = nodeCatalog.GetItemNodes;
-        auto& talkCountBranchNodes = nodeCatalog.TalkCountBranchNodes;
+        auto& npcTalkBranchCountNodes = nodeCatalog.NPCTalkBranchCountNodes;
 
         // Phase 1: measure required node capacity and spawn missing runtime nodes.
         {
@@ -126,7 +134,7 @@ namespace Palworld::TalkFlow
             size_t neededBuyPalShopNodes = 0;
             size_t neededSellPalShopNodes = 0;
             size_t neededGetItemNodes = 0;
-            size_t neededTalkCountBranchNodes = 0;
+            size_t neededNPCTalkBranchCountNodes = 0;
             bool willNeedExitSpare = false;
 
             for (const auto& [logicalId, nodeDef] : conversationNodes.items())
@@ -162,9 +170,9 @@ namespace Palworld::TalkFlow
                     continue;
                 }
 
-                if (nodeType == "TalkCountBranch")
+                if (IsNPCTalkBranchCountType(nodeType))
                 {
-                    ++neededTalkCountBranchNodes;
+                    ++neededNPCTalkBranchCountNodes;
                     continue;
                 }
 
@@ -178,7 +186,7 @@ namespace Palworld::TalkFlow
                     if (nodeType == "CustomChoice") needsChoice = true;
                     else if (nodeType == "FixedMessage") needsChoice = false;
                     else throw std::runtime_error(std::format(
-                        "Conversation '{}': node '{}' has unknown Type '{}'. Supported: FixedMessage, CustomChoice, ItemShopBuy, ItemShopSell, PalShopBuy, PalShopSell, GetItem, TalkCountBranch.",
+                        "Conversation '{}': node '{}' has unknown Type '{}'. Supported: FixedMessage, CustomChoice, ItemShopBuy, ItemShopSell, PalShopBuy, PalShopSell, GetItem, NPCTalkBranchCount (alias: TalkCountBranch).",
                         ownerId, logicalId, nodeType));
                 }
                 if (needsChoice) ++neededChoiceNodes;
@@ -285,14 +293,14 @@ namespace Palworld::TalkFlow
             }
 
             spawnIndex = 0;
-            while (talkCountBranchNodes.size() < neededTalkCountBranchNodes)
+            while (npcTalkBranchCountNodes.size() < neededNPCTalkBranchCountNodes)
             {
                 const auto newName = std::format("FNBP_NPCTalkCountBranch_C_Spawned_{}", spawnIndex++);
                 auto* newNode = context.cloneManager->SpawnNodeInClone(flowAsset, "FNBP_NPCTalkCountBranch_C", newName);
                 if (!newNode) break;
 
                 const auto nodeNameNarrow = RC::to_string(newNode->GetName());
-                talkCountBranchNodes.push_back(nodeNameNarrow);
+                npcTalkBranchCountNodes.push_back(nodeNameNarrow);
                 nodesByName.emplace(nodeNameNarrow, newNode);
             }
 
@@ -303,7 +311,7 @@ namespace Palworld::TalkFlow
             SortNodeNamesBySuffix(openPalShopBuyNodes);
             SortNodeNamesBySuffix(openPalShopSellNodes);
             SortNodeNamesBySuffix(getItemNodes);
-            SortNodeNamesBySuffix(talkCountBranchNodes);
+            SortNodeNamesBySuffix(npcTalkBranchCountNodes);
         }
 
         // Phase 2: choose logical entry ordering and map logical nodes to runtime nodes.
@@ -320,7 +328,7 @@ namespace Palworld::TalkFlow
         for (const auto& [logicalId, nodeDef] : conversationNodes.items())
         {
             const auto nodeType = nodeDef.value("Type", std::string{});
-            if (nodeType != "ItemShopBuy" && nodeType != "ItemShopSell" && nodeType != "PalShopBuy" && nodeType != "PalShopSell" && nodeType != "GetItem" && nodeType != "TalkCountBranch")
+            if (nodeType != "ItemShopBuy" && nodeType != "ItemShopSell" && nodeType != "PalShopBuy" && nodeType != "PalShopSell" && nodeType != "GetItem" && !IsNPCTalkBranchCountType(nodeType))
             {
                 ++nonShopLogicalNodes;
             }
@@ -414,7 +422,7 @@ namespace Palworld::TalkFlow
             const auto nodeType = nodeDef.value("Type", std::string{});
             logicalNodeType[logicalId] = nodeType;
 
-            if (nodeType == "ItemShopBuy" || nodeType == "ItemShopSell" || nodeType == "PalShopBuy" || nodeType == "PalShopSell" || nodeType == "GetItem" || nodeType == "TalkCountBranch")
+            if (nodeType == "ItemShopBuy" || nodeType == "ItemShopSell" || nodeType == "PalShopBuy" || nodeType == "PalShopSell" || nodeType == "GetItem" || IsNPCTalkBranchCountType(nodeType))
             {
                 logicalNeedsChoiceNode[logicalId] = false;
                 continue;
@@ -452,13 +460,13 @@ namespace Palworld::TalkFlow
         std::vector<std::string> mappedBuyPalShopNodes;
         std::vector<std::string> mappedSellPalShopNodes;
         std::vector<std::pair<std::string, std::string>> mappedGetItemNodes;
-        std::vector<std::pair<std::string, std::string>> mappedTalkCountBranchNodes;
+        std::vector<std::pair<std::string, std::string>> mappedNPCTalkBranchCountNodes;
         size_t buyShopNodeIndex = 0;
         size_t sellShopNodeIndex = 0;
         size_t buyPalShopNodeIndex = 0;
         size_t sellPalShopNodeIndex = 0;
         size_t getItemNodeIndex = 0;
-        size_t talkCountBranchNodeIndex = 0;
+        size_t npcTalkBranchCountNodeIndex = 0;
         size_t choiceNodeIndex = 0;
         size_t messageNodeIndex = 0;
         for (size_t i = 0; i < logicalOrder.size(); ++i)
@@ -521,13 +529,13 @@ namespace Palworld::TalkFlow
                 continue;
             }
 
-            if (nodeType == "TalkCountBranch")
+            if (IsNPCTalkBranchCountType(nodeType))
             {
-                if (talkCountBranchNodeIndex < talkCountBranchNodes.size())
+                if (npcTalkBranchCountNodeIndex < npcTalkBranchCountNodes.size())
                 {
-                    const auto& nodeName = talkCountBranchNodes[talkCountBranchNodeIndex++];
+                    const auto& nodeName = npcTalkBranchCountNodes[npcTalkBranchCountNodeIndex++];
                     logicalToRuntimeNode[logicalId] = nodeName;
-                    mappedTalkCountBranchNodes.emplace_back(logicalId, nodeName);
+                    mappedNPCTalkBranchCountNodes.emplace_back(logicalId, nodeName);
                 }
                 continue;
             }
@@ -561,12 +569,10 @@ namespace Palworld::TalkFlow
         int requiredFlowMaxTalkCount = 0;
         std::unordered_map<std::string, std::string> registeredTalkTextDefaults;
 
-        TalkFlow::Nodes::ShopNodePatchBuilder::Build(
-            mappedBuyShopNodes,
-            mappedSellShopNodes,
-            mappedBuyPalShopNodes,
-            mappedSellPalShopNodes,
-            nodePatches);
+        TalkFlow::Nodes::ItemShopBuyNodePatchBuilder::Build(mappedBuyShopNodes, nodePatches);
+        TalkFlow::Nodes::ItemShopSellNodePatchBuilder::Build(mappedSellShopNodes, nodePatches);
+        TalkFlow::Nodes::PalShopBuyNodePatchBuilder::Build(mappedBuyPalShopNodes, nodePatches);
+        TalkFlow::Nodes::PalShopSellNodePatchBuilder::Build(mappedSellPalShopNodes, nodePatches);
 
         TalkFlow::Nodes::GetItemNodePatchBuilder::Build(
             ownerId,
@@ -575,10 +581,10 @@ namespace Palworld::TalkFlow
             logicalToRuntimeNode,
             nodePatches);
 
-        TalkFlow::Nodes::TalkCountBranchNodePatchBuilder::Build(
+        TalkFlow::Nodes::NPCTalkBranchCountNodePatchBuilder::Build(
             ownerId,
             conversationNodes,
-            mappedTalkCountBranchNodes,
+            mappedNPCTalkBranchCountNodes,
             logicalToRuntimeNode,
             nodePatches,
             requiredFlowMaxTalkCount);

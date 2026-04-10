@@ -153,7 +153,7 @@ namespace Palworld::TalkFlow
             }
             else if (className.contains("FNBP_NPCTalkCountBranch_C") || hasOutputPins)
             {
-                catalog.TalkCountBranchNodes.push_back(nodeName);
+                catalog.NPCTalkBranchCountNodes.push_back(nodeName);
             }
         };
 
@@ -172,7 +172,7 @@ namespace Palworld::TalkFlow
         SortNodeNamesBySuffix(catalog.OpenPalShopBuyNodes);
         SortNodeNamesBySuffix(catalog.OpenPalShopSellNodes);
         SortNodeNamesBySuffix(catalog.GetItemNodes);
-        SortNodeNamesBySuffix(catalog.TalkCountBranchNodes);
+        SortNodeNamesBySuffix(catalog.NPCTalkBranchCountNodes);
 
         return catalog;
     }

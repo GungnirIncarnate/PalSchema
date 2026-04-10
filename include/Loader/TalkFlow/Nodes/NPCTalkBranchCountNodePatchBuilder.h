@@ -8,13 +8,13 @@
 
 namespace Palworld::TalkFlow::Nodes
 {
-    class TalkCountBranchNodePatchBuilder
+    class NPCTalkBranchCountNodePatchBuilder
     {
     public:
         static void Build(
             const std::string& ownerId,
             const nlohmann::json& conversationNodes,
-            const std::vector<std::pair<std::string, std::string>>& mappedTalkCountBranchNodes,
+            const std::vector<std::pair<std::string, std::string>>& mappedNPCTalkBranchCountNodes,
             const std::unordered_map<std::string, std::string>& logicalToRuntimeNode,
             nlohmann::json& nodePatches,
             int& requiredFlowMaxTalkCount);
