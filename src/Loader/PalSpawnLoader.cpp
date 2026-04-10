@@ -5,12 +5,14 @@
 #include "Unreal/Transform.hpp"
 #include "Unreal/World.hpp"
 #include "Unreal/Hooks/Hooks.hpp"
+#include "Unreal/UObjectGlobals.hpp"
 #include "SDK/Classes/AMonoNPCSpawner.h"
 #include "SDK/Classes/APalSpawnerStandard.h"
 #include "SDK/Classes/UWorldPartition.h"
 #include "SDK/Classes/UWorldPartitionRuntimeLevelStreamingCell.h"
 #include "SDK/Classes/ULevelStreaming.h"
 #include "SDK/Classes/KismetGuidLibrary.h"
+#include "SDK/Classes/KismetSystemLibrary.h"
 #include "SDK/Classes/Custom/UObjectGlobals.h"
 #include "SDK/Classes/Custom/DataTable/TableSerializer.h"
 #include "Utility/Logging.h"
@@ -522,6 +524,33 @@ namespace Palworld {
             return resolvedClass;
         }
 
+        // Preload step: try loading the blueprint asset by package path, then re-resolve class object.
+        auto loadedAsset = UECustom::UKismetSystemLibrary::LoadAsset_Blocking(
+            UECustom::TSoftObjectPtr<UObject>(UECustom::FSoftObjectPath(packagePath)));
+
+        if (loadedAsset)
+        {
+            resolvedClass = UECustom::UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, classObjectPath.c_str());
+            if (resolvedClass)
+            {
+                return resolvedClass;
+            }
+        }
+
+        // Fallback: search already-loaded classes by short object name.
+        const auto shortClassName = std::format(TEXT("{}_C"), assetName);
+        if (auto* loadedBpClass = RC::Unreal::UObjectGlobals::FindObject(
+                STR("BlueprintGeneratedClass"), shortClassName.c_str()))
+        {
+            return static_cast<UClass*>(loadedBpClass);
+        }
+
+        if (auto* loadedNativeClass = RC::Unreal::UObjectGlobals::FindObject(
+                STR("Class"), shortClassName.c_str()))
+        {
+            return static_cast<UClass*>(loadedNativeClass);
+        }
+
         return nullptr;
     }
 
@@ -544,12 +573,21 @@ namespace Palworld {
             return;
         }
 
+        auto* finishAddComponentFunction = resolvedNpc->GetFunctionByNameInChain(TEXT("FinishAddComponent"));
+        static auto actorComponentBaseClass = UECustom::UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/Engine.ActorComponent"));
+
         for (auto& configuredComponent : spawnerInfo.AddComponents)
         {
             auto* componentClass = ResolveComponentClass(configuredComponent);
             if (!componentClass)
             {
-                PS::Log<LogLevel::Warning>(STR("Failed to resolve component class from '{}'. The path format is valid but the class object was not found. Use /Game/.../BP_ComponentName or /Game/.../BP_ComponentName.BP_ComponentName_C.\n"), configuredComponent);
+                PS::Log<LogLevel::Warning>(STR("Failed to resolve component class from '{}'. Tried path lookup and blocking preload; skipping component attachment.\n"), configuredComponent);
+                continue;
+            }
+
+            if (actorComponentBaseClass && !componentClass->IsChildOf(actorComponentBaseClass))
+            {
+                PS::Log<LogLevel::Warning>(STR("Resolved class {} from '{}' is not an ActorComponent, skipping attachment to {}.\n"), componentClass->GetName(), configuredComponent, resolvedNpc->GetName());
                 continue;
             }
 
@@ -571,11 +609,26 @@ namespace Palworld {
 
             params.ComponentClass = componentClass;
             params.RelativeTransform = RC::Unreal::FTransform(RC::Unreal::FRotator{ 0.0, 0.0, 0.0 }, RC::Unreal::FVector{ 0.0, 0.0, 0.0 }, RC::Unreal::FVector{ 1.0, 1.0, 1.0 });
+            params.bDeferredFinish = finishAddComponentFunction != nullptr;
 
             resolvedNpc->ProcessEvent(addComponentFunction, &params);
 
             if (params.ReturnValue)
             {
+                if (finishAddComponentFunction)
+                {
+                    struct
+                    {
+                        RC::Unreal::UObject* Component = nullptr;
+                        bool bManualAttachment = false;
+                        RC::Unreal::FTransform RelativeTransform;
+                    } finishParams{};
+
+                    finishParams.Component = params.ReturnValue;
+                    finishParams.RelativeTransform = params.RelativeTransform;
+                    resolvedNpc->ProcessEvent(finishAddComponentFunction, &finishParams);
+                }
+
                 PS::Log<LogLevel::Normal>(STR("Attached component {} to resolved NPC {}.\n"), configuredComponent, resolvedNpc->GetName());
             }
             else
