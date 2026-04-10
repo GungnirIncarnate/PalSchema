@@ -268,7 +268,7 @@ namespace Palworld {
 
         m_spawns.push_back(spawnerInfo);
 
-        Output::send<LogLevel::Normal>(STR("Added new spawn: {}\n"), spawnerInfo.ToString());
+        Output::send<LogLevel::Verbose>(STR("Added new spawn: {}\n"), spawnerInfo.ToString());
     }
 
     void PalSpawnLoader::RegisterSheet(const std::filesystem::path::string_type& modName, PS::SpawnerInfo& spawnerInfo, const nlohmann::json& value)
@@ -463,7 +463,7 @@ namespace Palworld {
                     AttachConfiguredComponents(spawnedNpc, *spawnerInfo);
                 }
 
-                PS::Log<LogLevel::Normal>(STR("Resolved spawned NPC {} from MonoNPC spawner {} after {} retry tick(s).\n"),
+                PS::Log<LogLevel::Verbose>(STR("Resolved spawned NPC {} from MonoNPC spawner {} after {} retry tick(s).\n"),
                     spawnedNpc->GetName(), monoSpawner->GetName(), iterator->Attempts + 1);
                 iterator = m_pendingMonoNpcResolves.erase(iterator);
                 continue;
@@ -473,7 +473,7 @@ namespace Palworld {
             iterator->CooldownPassesRemaining = kMonoNpcResolveCooldownPasses;
             if (iterator->Attempts % 50 == 0)
             {
-                PS::Log<LogLevel::Normal>(STR("MonoNPC spawner {} still unresolved after {} retries; continuing to wait.\n"),
+                PS::Log<LogLevel::Verbose>(STR("MonoNPC spawner {} still unresolved after {} retries; continuing to wait.\n"),
                     monoSpawner->GetName(), iterator->Attempts);
             }
 
@@ -659,7 +659,7 @@ namespace Palworld {
 
                 ApplyConfiguredComponentProperties(params.ReturnValue, configuredComponent.Properties);
 
-                PS::Log<LogLevel::Normal>(STR("Attached component {} to resolved NPC {}.\n"), configuredComponent.ComponentPath, resolvedNpc->GetName());
+                PS::Log<LogLevel::Verbose>(STR("Attached component {} to resolved NPC {}.\n"), configuredComponent.ComponentPath, resolvedNpc->GetName());
             }
             else
             {
@@ -737,7 +737,7 @@ namespace Palworld {
 
         if (successfulChanges > 0)
         {
-            PS::Log<LogLevel::Normal>(STR("Applied {} configured property change(s) to component {}.\n"), successfulChanges, componentInstance->GetName());
+            PS::Log<LogLevel::Verbose>(STR("Applied {} configured property change(s) to component {}.\n"), successfulChanges, componentInstance->GetName());
         }
     }
 
@@ -747,7 +747,7 @@ namespace Palworld {
         {
             spawnerInfo.bExistsInWorld = true;
             spawnerInfo.Cell = cell;
-            PS::Log<LogLevel::Normal>(STR("Skipping MonoNPC spawn for {} because spawner actor {} is still alive.\n"),
+            PS::Log<LogLevel::Verbose>(STR("Skipping MonoNPC spawn for {} because spawner actor {} is still alive.\n"),
                 spawnerInfo.NPCID.ToString(), spawnerInfo.SpawnerActor->GetName());
             return;
         }
@@ -788,7 +788,7 @@ namespace Palworld {
 
         // Queue deferred resolution with a warmup so world streaming can finish before first lookup.
         m_pendingMonoNpcResolves.push_back({ monoSpawner, 0, kMonoNpcResolveWarmupPasses, 0 });
-        PS::Log<LogLevel::Normal>(STR("Queued MonoNPC spawner {} for deferred spawned-actor resolution after warmup.\n"), monoSpawner->GetName());
+        PS::Log<LogLevel::Verbose>(STR("Queued MonoNPC spawner {} for deferred spawned-actor resolution after warmup.\n"), monoSpawner->GetName());
 
         spawnerInfo.bExistsInWorld = true;
         spawnerInfo.Cell = cell;

@@ -216,7 +216,7 @@ namespace Palworld {
                     }
                     else
                     {
-                        PS::Log<LogLevel::Normal>(
+                        PS::Log<LogLevel::Verbose>(
                             STR("Applied talkflow patch for NPC {}\n"),
                             RC::to_generic_string(CharacterIdString)
                         );

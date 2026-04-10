@@ -398,7 +398,7 @@ namespace Palworld {
 
         if (addSucceeded)
         {
-            PS::Log<RC::LogLevel::Normal>(STR("Added vender data for {} (ItemShop: {}, PalShop: {})\n"), characterId.ToString(), processedItemShop ? STR("yes") : STR("no"), processedPalShop ? STR("yes") : STR("no"));
+            PS::Log<RC::LogLevel::Verbose>(STR("Added vender data for {} (ItemShop: {}, PalShop: {})\n"), characterId.ToString(), processedItemShop ? STR("yes") : STR("no"), processedPalShop ? STR("yes") : STR("no"));
         }
         else
         {
