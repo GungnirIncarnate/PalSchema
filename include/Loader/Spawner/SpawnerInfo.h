@@ -42,6 +42,7 @@ namespace PS {
         int Level = 1;
         RC::Unreal::FName NPCID = RC::Unreal::NAME_None;
         RC::Unreal::FName OtomoName = RC::Unreal::NAME_None;
+        std::vector<RC::StringType> AddComponents;
 
         // Sheet
 

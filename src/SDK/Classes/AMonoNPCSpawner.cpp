@@ -1,7 +1,5 @@
 #include "SDK/Classes/AMonoNPCSpawner.h"
-#include "Unreal/UFunction.hpp"
-#include "Unreal/UObjectGlobals.hpp"
-#include "Utility/Logging.h"
+#include "Unreal/UnrealFlags.hpp"
 
 using namespace RC::Unreal;
 
@@ -30,16 +28,82 @@ namespace Palworld {
         return *Value;
     }
 
-    void AMonoNPCSpawner::Spawn()
+    RC::Unreal::UObject* AMonoNPCSpawner::GetSpawnedHandle()
     {
-        auto Function = this->GetFunctionByNameInChain(TEXT("Spawn"));
-
-        if (!Function)
+        if (!this)
         {
-            PS::Log<RC::LogLevel::Error>(STR("Failed to execute 'Spawn', could not find function /Game/Pal/Blueprint/Spawner/BP_MonoNPCSpawner.BP_MonoNPCSpawner_C:Spawn.\n"));
-            return;
+            return nullptr;
         }
 
-        this->ProcessEvent(Function, nullptr);
+        if (!RC::Unreal::UObject::IsReal(this))
+        {
+            return nullptr;
+        }
+
+        if (!this->GetClassPrivate())
+        {
+            return nullptr;
+        }
+
+        if (this->HasAnyFlags(RC::Unreal::RF_ClassDefaultObject))
+        {
+            return nullptr;
+        }
+
+        auto Value = this->GetValuePtrByPropertyNameInChain<RC::Unreal::UObject*>(TEXT("SpawnedHandle"));
+        if (!Value)
+        {
+            return nullptr;
+        }
+
+        return *Value;
     }
+
+    RC::Unreal::AActor* AMonoNPCSpawner::TryGetSpawnedCharacter()
+    {
+        if (!this)
+        {
+            return nullptr;
+        }
+
+        if (!RC::Unreal::UObject::IsReal(this))
+        {
+            return nullptr;
+        }
+
+        if (!this->GetClassPrivate())
+        {
+            return nullptr;
+        }
+
+        if (this->HasAnyFlags(RC::Unreal::RF_ClassDefaultObject))
+        {
+            return nullptr;
+        }
+
+        auto* spawnedHandle = GetSpawnedHandle();
+        if (!spawnedHandle)
+        {
+            return nullptr;
+        }
+
+        if (!RC::Unreal::UObject::IsReal(spawnedHandle))
+        {
+            return nullptr;
+        }
+
+        auto* Function = spawnedHandle->GetFunctionByNameInChain(TEXT("TryGetIndividualActor"));
+        if (!Function)
+        {
+            return nullptr;
+        }
+
+        struct {
+            RC::Unreal::AActor* ReturnValue = nullptr;
+        } params{};
+
+        spawnedHandle->ProcessEvent(Function, &params);
+        return params.ReturnValue;
+    }
+
 }
