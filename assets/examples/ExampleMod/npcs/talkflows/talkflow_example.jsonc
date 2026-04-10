@@ -138,6 +138,8 @@
             },
             "VisitCountExample": {
                 "Type": "TalkCountBranch",
+                "NetworkInvokeName": "Gift_StarterPack1",
+                "SaveNetworkInvoke": true,
                 "Routes": {
                     "1": "FirstVisit",
                     "2": "SecondVisit",

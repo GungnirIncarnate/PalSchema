@@ -1,0 +1,32 @@
+[{
+        "Type": "MonoNPC",
+        "NPCID": "Gun_TestNPC",
+        "Level": 2,
+        "Location": {
+            "X": 85388.0,
+            "Y": 78484.0,
+            "Z": 60130.0
+        },
+        "Rotation": {
+            "Pitch": 180.0,
+            "Yaw": 180.0,
+            "Roll": 180.0
+        },
+        "AddComponents": [{
+                "ComponentPath": "/Game/Pal/Blueprint/Component/VenderData/BP_PalShopVenderDataComponent.BP_PalShopVenderDataComponent_C",
+                "Properties": {
+                    "ItemShopRestockMinute": 48,
+					"itemShopLotteryType": "EPalShopLotteryType::SimpleLottery",
+                    "itemShopSimpleLotteryTableName": {
+                        "Key": "Legendary_Sphere_Lottery"
+                    },
+                    "PalShopRestockMinute": 48,
+                    "palShopLotteryType": "EPalShopLotteryType::SimpleLottery",
+                    "palShopSimpleLotteryTableName": {
+                        "Key": "Gun_TestNPC_PalShop"
+                    }
+                }
+            }
+        ]
+    }
+]
