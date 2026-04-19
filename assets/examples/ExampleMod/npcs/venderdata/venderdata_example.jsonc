@@ -1,0 +1,45 @@
+{
+    "Gun_TestNPC": {
+        "ItemShop": {
+            "TableId": "Legendary_Sphere_Lottery",
+            "Currency": "Money",
+            "Items": [{
+                    "StaticItemId": "PalSphere",
+                    "ProductType": "EPalItemShopProductType::Normal",
+                    "OverridePrice": 0,
+                    "ProductNum": 1,
+                    "Stock": 0
+                }, {
+                    "StaticItemId": "Sapphire",
+                    "ProductType": "EPalItemShopProductType::Normal",
+                    "OverridePrice": 0,
+                    "ProductNum": 1,
+                    "Stock": 0
+                }, {
+                    "StaticItemId": "Eemerald",
+                    "ProductType": "EPalItemShopProductType::Normal",
+                    "OverridePrice": 0,
+                    "ProductNum": 1,
+                    "Stock": 0
+                }, {
+                    "StaticItemId": "Copperingot",
+                    "ProductType": "EPalItemShopProductType::Normal",
+                    "OverridePrice": 0,
+                    "ProductNum": 1,
+                    "Stock": 0
+                }
+            ]
+        },
+        "PalShop": {
+			"TableId": "Gun_TestNPC_PalShop",
+            "MinCharacterLevel": 1,
+            "MaxCharacterLevel": 10,
+            "CharacterNum": 3,
+            "CharacterIDArray": [
+                "WhiteShieldDragon",
+                "LeafMomonga",
+                "GuardianDog"
+            ]
+        }
+    }
+}

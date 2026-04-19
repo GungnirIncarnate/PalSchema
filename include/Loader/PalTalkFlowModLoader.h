@@ -2,6 +2,7 @@
 
 #include "Loader/PalModLoaderBase.h"
 #include "Loader/TalkFlowCloneManager.h"
+#include "Loader/TalkFlow/TalkFlowPendingWorkProcessor.h"
 #include "nlohmann/json.hpp"
 #include <optional>
 #include <vector>
@@ -26,11 +27,7 @@ namespace Palworld {
 
         virtual bool OnInitialize() override final;
     private:
-        struct PendingCloneAssignment {
-            RC::StringType CharacterId;
-            RC::StringType SourceAssetPath;
-            bool ForceRebuild = false;
-        };
+        using PendingCloneAssignment = TalkFlow::PendingCloneAssignment;
 
         RC::StringType ResolveAndAssignClonedTalkFlow(const RC::StringType& CharacterIdString, const RC::StringType& TalkFlowPath, bool ForceRebuildClone = false);
 
@@ -46,17 +43,9 @@ namespace Palworld {
 
         bool ApplySingleFlowPatch(const nlohmann::json& Patch, bool SkipVanillaGuard = false);
 
-        RC::Unreal::UObject* FindTalkFlowAsset(const RC::StringType& AssetPath) const;
-
         void QueueFlowPatchRetry(const nlohmann::json& Patch, bool SkipVanillaGuard);
 
         void ProcessPending();
-
-        RC::StringType CanonicalizeTalkFlowPath(const RC::StringType& TalkFlowPath) const;
-
-        void AddTalkFlowPathCandidates(const RC::StringType& TalkFlowPath, std::vector<RC::StringType>& Candidates) const;
-
-        void AddTalkFlowCandidatesFromDataTable(const RC::StringType& TalkFlowPath, std::vector<RC::StringType>& Candidates) const;
 
         void ApplyNodePatch(RC::Unreal::UObject* NodeObject, const nlohmann::json& NodePatch);
 
