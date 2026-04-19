@@ -12,16 +12,13 @@
 #include "SDK/Classes/UWorldPartitionRuntimeLevelStreamingCell.h"
 #include "SDK/Classes/ULevelStreaming.h"
 #include "SDK/Classes/KismetGuidLibrary.h"
-#include "SDK/Classes/KismetSystemLibrary.h"
 #include "SDK/Classes/Custom/UObjectGlobals.h"
 #include "SDK/Classes/Custom/DataTable/TableSerializer.h"
-#include "SDK/Helper/PropertyHelper.h"
 #include "Utility/Logging.h"
 #include "Utility/EnumHelpers.h"
 #include "Utility/JsonHelpers.h"
 #include "Loader/PalSpawnLoader.h"
 #include "SDK/PalSignatures.h"
-#include <cctype>
 
 using namespace RC;
 using namespace RC::Unreal;
@@ -304,7 +301,7 @@ namespace Palworld {
 
             std::string spawnerType;
             PS::JsonHelpers::ParseString(value, "SpawnerType", spawnerType);
-            spawnerInfo.SpawnerType = PS::EnumHelpers::GetEnumValueByName(ENUM_EPalSpawnedCharacterType, spawnerType);
+            spawnerInfo.SpawnerType = static_cast<RC::Unreal::uint8>(PS::EnumHelpers::GetEnumValueByName(ENUM_EPalSpawnedCharacterType, spawnerType));
 
             if (spawnerType.ends_with("FieldBoss"))
             {
@@ -332,70 +329,7 @@ namespace Palworld {
             PS::JsonHelpers::ParseFName(value, "OtomoId", spawnerInfo.OtomoName);
         }
 
-        if (PS::JsonHelpers::FieldExists(value, "AddComponents"))
-        {
-            auto& addComponents = value.at("AddComponents");
-            if (!addComponents.is_array())
-            {
-                throw std::runtime_error("AddComponents must be an array.");
-            }
-
-            for (auto& item : addComponents)
-            {
-                std::string componentName;
-                nlohmann::json componentProperties = nlohmann::json::object();
-
-                if (item.is_string())
-                {
-                    componentName = item.get<std::string>();
-                }
-                else if (item.is_object())
-                {
-                    if (!item.contains("ComponentPath") || !item.at("ComponentPath").is_string())
-                    {
-                        throw std::runtime_error("AddComponents object entries must include a string field named ComponentPath.");
-                    }
-
-                    componentName = item.at("ComponentPath").get<std::string>();
-
-                    if (item.contains("Properties"))
-                    {
-                        if (!item.at("Properties").is_object())
-                        {
-                            throw std::runtime_error("AddComponents.Properties must be an object.");
-                        }
-
-                        componentProperties = item.at("Properties");
-                    }
-                }
-                else
-                {
-                    throw std::runtime_error("AddComponents entries must be either strings or objects.");
-                }
-
-                // Be tolerant of accidental whitespace in JSON values.
-                const auto firstNonSpace = componentName.find_first_not_of(" \t\r\n");
-                if (firstNonSpace == std::string::npos)
-                {
-                    continue;
-                }
-
-                const auto lastNonSpace = componentName.find_last_not_of(" \t\r\n");
-                componentName = componentName.substr(firstNonSpace, lastNonSpace - firstNonSpace + 1);
-
-                if (componentName.empty())
-                {
-                    continue;
-                }
-
-                if (!componentName.starts_with('/'))
-                {
-                    throw std::runtime_error("AddComponents entries must be full asset paths, e.g. /Game/.../BP_ComponentName or /Game/.../BP_ComponentName.BP_ComponentName_C");
-                }
-
-                spawnerInfo.AddComponents.push_back({ RC::to_generic_string(componentName), std::move(componentProperties) });
-            }
-        }
+        m_monoNpcComponentProfileApplicator.ParseProfileComponents(value, spawnerInfo);
     }
 
     void PalSpawnLoader::ProcessCellSpawners(UECustom::UWorldPartitionRuntimeLevelStreamingCell* cell)
@@ -460,7 +394,7 @@ namespace Palworld {
             {
                 if (auto* spawnerInfo = FindSpawnerInfoBySpawnerActor(monoSpawner))
                 {
-                    AttachConfiguredComponents(spawnedNpc, *spawnerInfo);
+                    m_monoNpcComponentProfileApplicator.ApplyProfileComponents(spawnedNpc, *spawnerInfo);
                 }
 
                 PS::Log<LogLevel::Verbose>(STR("Resolved spawned NPC {} from MonoNPC spawner {} after {} retry tick(s).\n"),
@@ -481,7 +415,7 @@ namespace Palworld {
         }
     }
 
-    PS::SpawnerInfo* PalSpawnLoader::FindSpawnerInfoBySpawnerActor(RC::Unreal::AActor* spawnerActor)
+    PS::SpawnerInfo* PalSpawnLoader::FindSpawnerInfoBySpawnerActor(AMonoNPCSpawner* spawnerActor)
     {
         for (auto& spawnerInfo : m_spawns)
         {
@@ -492,253 +426,6 @@ namespace Palworld {
         }
 
         return nullptr;
-    }
-
-    RC::Unreal::UClass* PalSpawnLoader::ResolveComponentClass(const RC::StringType& configuredName)
-    {
-        // Full class object path may already be provided.
-        auto* resolvedClass = UECustom::UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, configuredName.c_str());
-        if (resolvedClass)
-        {
-            return resolvedClass;
-        }
-
-        // Enforce full package paths for AddComponents to keep the schema future-proof.
-        if (configuredName.find(TEXT('/')) == RC::StringType::npos)
-        {
-            return nullptr;
-        }
-
-        RC::StringType packagePath = configuredName;
-        const auto dotPos = packagePath.find_last_of(TEXT('.'));
-        if (dotPos != RC::StringType::npos)
-        {
-            // Supports paths like /Game/.../BP_Component.BP_Component_C.
-            const auto objectName = packagePath.substr(dotPos + 1);
-            if (!objectName.ends_with(TEXT("_C")))
-            {
-                const auto classObjectPath = std::format(TEXT("{}_C"), packagePath);
-                resolvedClass = UECustom::UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, classObjectPath.c_str());
-                if (resolvedClass)
-                {
-                    return resolvedClass;
-                }
-            }
-
-            packagePath = packagePath.substr(0, dotPos);
-        }
-
-        const auto slashPos = packagePath.find_last_of(TEXT('/'));
-        if (slashPos == RC::StringType::npos || slashPos + 1 >= packagePath.size())
-        {
-            return nullptr;
-        }
-
-        auto assetName = packagePath.substr(slashPos + 1);
-        if (assetName.ends_with(TEXT("_C")))
-        {
-            assetName = assetName.substr(0, assetName.size() - 2);
-        }
-
-        if (assetName.empty())
-        {
-            return nullptr;
-        }
-
-        const auto classObjectPath = std::format(TEXT("{}.{}_C"), packagePath, assetName);
-        resolvedClass = UECustom::UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, classObjectPath.c_str());
-        if (resolvedClass)
-        {
-            return resolvedClass;
-        }
-
-        // Preload step: try loading the blueprint asset by package path, then re-resolve class object.
-        auto loadedAsset = UECustom::UKismetSystemLibrary::LoadAsset_Blocking(
-            UECustom::TSoftObjectPtr<UObject>(UECustom::FSoftObjectPath(packagePath)));
-
-        if (loadedAsset)
-        {
-            resolvedClass = UECustom::UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, classObjectPath.c_str());
-            if (resolvedClass)
-            {
-                return resolvedClass;
-            }
-        }
-
-        // Fallback: search already-loaded classes by short object name.
-        const auto shortClassName = std::format(TEXT("{}_C"), assetName);
-        if (auto* loadedBpClass = RC::Unreal::UObjectGlobals::FindObject(
-                STR("BlueprintGeneratedClass"), shortClassName.c_str()))
-        {
-            return static_cast<UClass*>(loadedBpClass);
-        }
-
-        if (auto* loadedNativeClass = RC::Unreal::UObjectGlobals::FindObject(
-                STR("Class"), shortClassName.c_str()))
-        {
-            return static_cast<UClass*>(loadedNativeClass);
-        }
-
-        return nullptr;
-    }
-
-    void PalSpawnLoader::AttachConfiguredComponents(RC::Unreal::AActor* resolvedNpc, const PS::SpawnerInfo& spawnerInfo)
-    {
-        if (!resolvedNpc)
-        {
-            return;
-        }
-
-        if (spawnerInfo.AddComponents.empty())
-        {
-            return;
-        }
-
-        auto* addComponentFunction = resolvedNpc->GetFunctionByNameInChain(TEXT("AddComponentByClass"));
-        if (!addComponentFunction)
-        {
-            PS::Log<LogLevel::Warning>(STR("Failed to attach configured components for {} because AddComponentByClass is unavailable.\n"), resolvedNpc->GetName());
-            return;
-        }
-
-        auto* finishAddComponentFunction = resolvedNpc->GetFunctionByNameInChain(TEXT("FinishAddComponent"));
-        static auto actorComponentBaseClass = UECustom::UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/Engine.ActorComponent"));
-
-        for (auto& configuredComponent : spawnerInfo.AddComponents)
-        {
-            auto* componentClass = ResolveComponentClass(configuredComponent.ComponentPath);
-            if (!componentClass)
-            {
-                PS::Log<LogLevel::Warning>(STR("Failed to resolve component class from '{}'. Tried path lookup and blocking preload; skipping component attachment.\n"), configuredComponent.ComponentPath);
-                continue;
-            }
-
-            if (actorComponentBaseClass && !componentClass->IsChildOf(actorComponentBaseClass))
-            {
-                PS::Log<LogLevel::Warning>(STR("Resolved class {} from '{}' is not an ActorComponent, skipping attachment to {}.\n"), componentClass->GetName(), configuredComponent.ComponentPath, resolvedNpc->GetName());
-                continue;
-            }
-
-            auto existingComponents = resolvedNpc->K2_GetComponentsByClass(componentClass);
-            if (existingComponents.Num() > 0)
-            {
-                PS::Log<LogLevel::Verbose>(STR("Skipping component {} on {} because an instance already exists.\n"), configuredComponent.ComponentPath, resolvedNpc->GetName());
-                continue;
-            }
-
-            struct
-            {
-                RC::Unreal::UClass* ComponentClass = nullptr;
-                bool bManualAttachment = false;
-                RC::Unreal::FTransform RelativeTransform;
-                bool bDeferredFinish = false;
-                RC::Unreal::UObject* ReturnValue = nullptr;
-            } params{};
-
-            params.ComponentClass = componentClass;
-            params.RelativeTransform = RC::Unreal::FTransform(RC::Unreal::FRotator{ 0.0, 0.0, 0.0 }, RC::Unreal::FVector{ 0.0, 0.0, 0.0 }, RC::Unreal::FVector{ 1.0, 1.0, 1.0 });
-            params.bDeferredFinish = finishAddComponentFunction != nullptr;
-
-            resolvedNpc->ProcessEvent(addComponentFunction, &params);
-
-            if (params.ReturnValue)
-            {
-                if (finishAddComponentFunction)
-                {
-                    struct
-                    {
-                        RC::Unreal::UObject* Component = nullptr;
-                        bool bManualAttachment = false;
-                        RC::Unreal::FTransform RelativeTransform;
-                    } finishParams{};
-
-                    finishParams.Component = params.ReturnValue;
-                    finishParams.RelativeTransform = params.RelativeTransform;
-                    resolvedNpc->ProcessEvent(finishAddComponentFunction, &finishParams);
-                }
-
-                ApplyConfiguredComponentProperties(params.ReturnValue, configuredComponent.Properties);
-
-                PS::Log<LogLevel::Verbose>(STR("Attached component {} to resolved NPC {}.\n"), configuredComponent.ComponentPath, resolvedNpc->GetName());
-            }
-            else
-            {
-                PS::Log<LogLevel::Warning>(STR("AddComponentByClass returned null while attaching {} to {}.\n"), configuredComponent.ComponentPath, resolvedNpc->GetName());
-            }
-        }
-    }
-
-    void PalSpawnLoader::ApplyConfiguredComponentProperties(RC::Unreal::UObject* componentInstance, const nlohmann::json& properties)
-    {
-        if (!componentInstance || !properties.is_object() || properties.empty())
-        {
-            return;
-        }
-
-        auto findPropertyByNameLoose = [](RC::Unreal::UClass* classType, const std::string& requestedName) -> RC::Unreal::FProperty*
-        {
-            if (!classType)
-            {
-                return nullptr;
-            }
-
-            auto normalize = [](const std::string& value)
-            {
-                std::string lowered;
-                lowered.reserve(value.size());
-                for (unsigned char c : value)
-                {
-                    lowered.push_back(static_cast<char>(std::tolower(c)));
-                }
-                return lowered;
-            };
-
-            const auto requestedLower = normalize(requestedName);
-            RC::Unreal::FProperty* bestMatch = nullptr;
-
-            for (auto* property = classType->GetPropertyLink(); property != nullptr; property = property->GetPropertyLinkNext())
-            {
-                const auto propertyNameUtf8 = RC::to_string(property->GetName());
-                if (propertyNameUtf8 == requestedName)
-                {
-                    return property;
-                }
-
-                if (normalize(propertyNameUtf8) == requestedLower)
-                {
-                    bestMatch = property;
-                }
-            }
-
-            return bestMatch;
-        };
-
-        int successfulChanges = 0;
-        for (auto& [propertyName, propertyValue] : properties.items())
-        {
-            auto* property = findPropertyByNameLoose(componentInstance->GetClassPrivate(), propertyName);
-            if (!property)
-            {
-                PS::Log<LogLevel::Warning>(STR("Property '{}' does not exist on component {}.\n"), RC::to_generic_string(propertyName), componentInstance->GetName());
-                continue;
-            }
-
-            try
-            {
-                Palworld::PropertyHelper::CopyJsonValueToContainer(componentInstance, property, propertyValue);
-                ++successfulChanges;
-            }
-            catch (const std::exception& ex)
-            {
-                PS::Log<LogLevel::Warning>(STR("Failed to set component property '{}' on {}: {}\n"),
-                    RC::to_generic_string(propertyName), componentInstance->GetName(), RC::to_generic_string(ex.what()));
-            }
-        }
-
-        if (successfulChanges > 0)
-        {
-            PS::Log<LogLevel::Verbose>(STR("Applied {} configured property change(s) to component {}.\n"), successfulChanges, componentInstance->GetName());
-        }
     }
 
     void PalSpawnLoader::SpawnMonoNPC(UECustom::UWorldPartitionRuntimeLevelStreamingCell* cell, PS::SpawnerInfo& spawnerInfo)
