@@ -20,7 +20,7 @@ namespace PS
     {
         if (!merchantNode.is_object())
         {
-            throw std::runtime_error("Merchant must be an object.");
+            throw std::runtime_error("MonoNPC spawn entry must be an object.");
         }
 
         auto parseMerchantShop = [](const nlohmann::json& shopNode, const char* fieldName, PS::MerchantShopProfile& outProfile)
@@ -33,7 +33,7 @@ namespace PS
             auto& merchantShop = shopNode.at(fieldName);
             if (!merchantShop.is_object())
             {
-                throw std::runtime_error(std::format("Merchant.{} must be an object.", fieldName));
+                throw std::runtime_error(std::format("{} must be an object.", fieldName));
             }
 
             outProfile.Enabled = true;
@@ -49,7 +49,7 @@ namespace PS
 
         if (!outProfile.ItemShop.Enabled && !outProfile.PalShop.Enabled)
         {
-            throw std::runtime_error("Merchant requires at least one configured shop: ItemShop and/or PalShop.");
+            throw std::runtime_error("At least one shop must be configured: ItemShop and/or PalShop.");
         }
     }
 

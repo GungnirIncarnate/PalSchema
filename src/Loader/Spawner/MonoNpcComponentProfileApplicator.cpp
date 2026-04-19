@@ -8,10 +8,11 @@ namespace PS
         spawnerInfo.MonoNpcProfiles.RequiredComponents.clear();
         spawnerInfo.MonoNpcProfiles.Payloads.clear();
 
-        if (PS::JsonHelpers::FieldExists(spawnNode, "Merchant"))
+        if (PS::JsonHelpers::FieldExists(spawnNode, "ItemShop") ||
+            PS::JsonHelpers::FieldExists(spawnNode, "PalShop"))
         {
             PS::MerchantProfile merchantProfile{};
-            m_merchantHandler.ParseConfig(spawnNode.at("Merchant"), merchantProfile);
+            m_merchantHandler.ParseConfig(spawnNode, merchantProfile);
 
             spawnerInfo.MonoNpcProfiles.RequiredComponents.push_back(PS::MonoNpcProfileComponentType::Merchant);
             spawnerInfo.MonoNpcProfiles.Payloads.emplace(
