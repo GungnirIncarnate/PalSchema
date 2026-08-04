@@ -1,0 +1,291 @@
+{
+    "DT_PartnerSkillParameter": {
+        "PinkCat": {
+            "PassiveSkills": {
+                "Action": "Patch",
+                "Operations": [{
+                        "Type": "EditAt",
+                        "Index": 0,
+                        "Value": {
+                            "SkillAndParametersArray": {
+                                "Action": "Patch",
+                                "Operations": [{
+                                        "Type": "EditAt",
+                                        "Index": 0,
+                                        "Value": {
+                                            "SkillName": {
+                                                "Key": "GrassRabbitMan_PartnerSkill"
+                                            }
+                                        }
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                ]
+            }
+        },
+        "SheepBall": {
+            "PassiveSkills": {
+                "Action": "Patch",
+                "Operations": [{
+                        "Type": "Append",
+                        "Value": {
+                            "SkillAndParametersArray": [{
+                                    "SkillName": {
+                                        "Key": "GrassRabbitMan_PartnerSkill"
+                                    },
+                                    "Parameters": {
+                                        "DelayTime": 0.0,
+                                        "WorkType": "EPalWorkType::None",
+                                        "bAssignPassiveIgnoreCurrentWorkType": false,
+                                        "MapObjectId": [],
+                                        "ItemId": [],
+                                        "AssignOthers": false,
+                                        "TargetElementType": "EPalElementType::None",
+                                        "PalTribeIds": [],
+                                        "bNotAssignSelf": false,
+                                        "TriggerParam": {
+                                            "TargetTribeIds": []
+                                        },
+                                        "ItemParam": {
+                                            "ItemTypeA": "EPalItemTypeA::None",
+                                            "ItemTypeB": "EPalItemTypeB::None",
+                                            "ItemIds": [],
+                                            "ExcludedItemIds": [],
+                                            "bIsContainNoItemId": false,
+                                            "WeaponType": "EPalWeaponType::None",
+                                            "WeaponTypes": [],
+                                            "bMeleeOnly": false
+                                        },
+                                        "RegeneParam": {
+                                            "Interval": 0
+                                        },
+                                        "OtherOtomoConditionParam": {
+                                            "TargetElementType": "EPalElementType::None",
+                                            "TargetElementTypes": [],
+                                            "PalTribeIds": []
+                                        },
+                                        "FloatValue1": 0.0
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+        "ChickenPal": {
+            "PassiveSkills": [{
+                    "SkillAndParametersArray": [{
+                            "SkillName": {
+                                "Key": "GrassRabbitMan_PartnerSkill"
+                            },
+                            "Parameters": {
+                                "DelayTime": 0.0,
+                                "WorkType": "EPalWorkType::None",
+                                "bAssignPassiveIgnoreCurrentWorkType": false,
+                                "MapObjectId": [],
+                                "ItemId": [],
+                                "AssignOthers": false,
+                                "TargetElementType": "EPalElementType::None",
+                                "PalTribeIds": [],
+                                "bNotAssignSelf": false,
+                                "TriggerParam": {
+                                    "TargetTribeIds": []
+                                },
+                                "ItemParam": {
+                                    "ItemTypeA": "EPalItemTypeA::None",
+                                    "ItemTypeB": "EPalItemTypeB::None",
+                                    "ItemIds": [],
+                                    "ExcludedItemIds": [],
+                                    "bIsContainNoItemId": false,
+                                    "WeaponType": "EPalWeaponType::None",
+                                    "WeaponTypes": [],
+                                    "bMeleeOnly": false
+                                },
+                                "RegeneParam": {
+                                    "Interval": 0
+                                },
+                                "OtherOtomoConditionParam": {
+                                    "TargetElementType": "EPalElementType::None",
+                                    "TargetElementTypes": [],
+                                    "PalTribeIds": []
+                                },
+                                "FloatValue1": 0.0
+                            }
+                        }
+                    ]
+                }
+            ]
+        },
+		"Penguin": {
+			"RestrictionItems": [],
+			"PassiveSkills": {
+				"Items": [{
+					"SkillAndParametersArray": [{
+                            "SkillName": {
+                                "Key": "GrassRabbitMan_PartnerSkill"
+                            },
+                            "Parameters": {
+                                "DelayTime": 0.0,
+                                "WorkType": "EPalWorkType::None",
+                                "bAssignPassiveIgnoreCurrentWorkType": false,
+                                "MapObjectId": [],
+                                "ItemId": [],
+                                "AssignOthers": false,
+                                "TargetElementType": "EPalElementType::None",
+                                "PalTribeIds": [],
+                                "bNotAssignSelf": false,
+                                "TriggerParam": {
+                                    "TargetTribeIds": []
+                                },
+                                "ItemParam": {
+                                    "ItemTypeA": "EPalItemTypeA::None",
+                                    "ItemTypeB": "EPalItemTypeB::None",
+                                    "ItemIds": [],
+                                    "ExcludedItemIds": [],
+                                    "bIsContainNoItemId": false,
+                                    "WeaponType": "EPalWeaponType::None",
+                                    "WeaponTypes": [],
+                                    "bMeleeOnly": false
+                                },
+                                "RegeneParam": {
+                                    "Interval": 0
+                                },
+                                "OtherOtomoConditionParam": {
+                                    "TargetElementType": "EPalElementType::None",
+                                    "TargetElementTypes": [],
+                                    "PalTribeIds": []
+                                },
+                                "FloatValue1": 0.0
+                            }
+                        }
+                    ]
+				}]
+			}
+		},
+		"SamuraiDog": {
+            "PassiveSkills": {
+                "Action": "Clear",
+                "Items": [
+                    {
+                        "SkillAndParametersArray": [
+                            {
+                                "SkillName": {
+                                    "Key": "GrassRabbitMan_PartnerSkill"
+                                },
+                                "Parameters": {
+                                    "DelayTime": 0.0,
+                                    "WorkType": "EPalWorkType::None",
+                                    "bAssignPassiveIgnoreCurrentWorkType": false,
+                                    "MapObjectId": [],
+                                    "ItemId": [],
+                                    "AssignOthers": false,
+                                    "TargetElementType": "EPalElementType::None",
+                                    "PalTribeIds": [],
+                                    "bNotAssignSelf": false,
+                                    "TriggerParam": {
+                                        "TargetTribeIds": []
+                                    },
+                                    "ItemParam": {
+                                        "ItemTypeA": "EPalItemTypeA::None",
+                                        "ItemTypeB": "EPalItemTypeB::None",
+                                        "ItemIds": [],
+                                        "ExcludedItemIds": [],
+                                        "bIsContainNoItemId": false,
+                                        "WeaponType": "EPalWeaponType::None",
+                                        "WeaponTypes": [],
+                                        "bMeleeOnly": false
+                                    },
+                                    "RegeneParam": {
+                                        "Interval": 0
+                                    },
+                                    "OtherOtomoConditionParam": {
+                                        "TargetElementType": "EPalElementType::None",
+                                        "TargetElementTypes": [],
+                                        "PalTribeIds": []
+                                    },
+                                    "FloatValue1": 0.0
+                                }
+                            }
+                        ]
+                    }
+                ]
+            }
+        },
+		"PlantSlime": {
+            "RestrictionItems": [],
+            "PassiveSkills": {
+                "Action": "Patch",
+                "Operations": [
+                    {
+                        "Type": "Append",
+                        "Value": {
+                            "SkillAndParametersArray": [
+                                {
+                                    "SkillName": {
+                                        "Key": "GrassRabbitMan_PartnerSkill"
+                                    },
+                                    "Parameters": {
+                                        "DelayTime": 0.0,
+                                        "WorkType": "EPalWorkType::None",
+                                        "bAssignPassiveIgnoreCurrentWorkType": false,
+                                        "MapObjectId": [],
+                                        "ItemId": [],
+                                        "AssignOthers": false,
+                                        "TargetElementType": "EPalElementType::None",
+                                        "PalTribeIds": [],
+                                        "bNotAssignSelf": false,
+                                        "TriggerParam": {
+                                            "TargetTribeIds": []
+                                        },
+                                        "ItemParam": {
+                                            "ItemTypeA": "EPalItemTypeA::None",
+                                            "ItemTypeB": "EPalItemTypeB::None",
+                                            "ItemIds": [],
+                                            "ExcludedItemIds": [],
+                                            "bIsContainNoItemId": false,
+                                            "WeaponType": "EPalWeaponType::None",
+                                            "WeaponTypes": [],
+                                            "bMeleeOnly": false
+                                        },
+                                        "RegeneParam": {
+                                            "Interval": 0
+                                        },
+                                        "OtherOtomoConditionParam": {
+                                            "TargetElementType": "EPalElementType::None",
+                                            "TargetElementTypes": [],
+                                            "PalTribeIds": []
+                                        },
+                                        "FloatValue1": 0.0
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "Type": "RemoveAt",
+                        "Index": 4
+                    },
+					{
+                        "Type": "RemoveAt",
+                        "Index": 3
+                    },
+					{
+                        "Type": "RemoveAt",
+                        "Index": 2
+                    },
+					{
+                        "Type": "RemoveAt",
+                        "Index": 1
+                    },
+					{
+                        "Type": "RemoveAt",
+                        "Index": 0
+                    }
+                ]
+            }
+        }
+    }
+}

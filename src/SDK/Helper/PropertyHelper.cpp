@@ -11,6 +11,7 @@
 #include "SDK/Structs/Custom/FManagedValue.h"
 #include "SDK/Structs/Custom/FScriptMapHelper.h"
 #include "SDK/Structs/Custom/FScriptArrayHelper.h"
+#include "SDK/Helper/ArrayHelper.h"
 #include "SDK/Helper/PropertyHelper.h"
 #include "SDK/PalSignatures.h"
 #include "Utility/Logging.h"
@@ -387,6 +388,24 @@ namespace Palworld {
 
         if (Value.is_object())
         {
+            if (Value.contains("Action") && Value.at("Action").is_string())
+            {
+                auto Action = Value.at("Action").get<std::string>();
+                if (Action == "Patch")
+                {
+                    ArrayHelper::ApplyPatchOperationsToArray(
+                        Data,
+                        Property,
+                        Value,
+                        [](void* container, FProperty* property, const nlohmann::json& jsonValue) {
+                            CopyJsonValueToContainer(container, property, jsonValue);
+                        }
+                    );
+
+                    return;
+                }
+            }
+
             if (Value.contains("Action"))
             {
                 auto Action = Value.at("Action").get<std::string>();
