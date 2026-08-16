@@ -4,6 +4,7 @@
 #include "Unreal/UFunction.hpp"
 #include "Unreal/Hooks.hpp"
 #include "Utility/Config.h"
+#include "Utility/ModLoadOrderHelper.h"
 #include "Utility/Logging.h"
 #include "SDK/Classes/Async.h"
 #include "SDK/Classes/Custom/UDataTableStore.h"
@@ -117,13 +118,12 @@ namespace Palworld {
         static auto modsPath = fs::path(UE4SSProgram::get_program().get_working_directory()) / "Mods" / "PalSchema" / "mods";
         if (fs::exists(modsPath))
         {
-            for (const auto& entry : fs::directory_iterator(modsPath)) {
-                if (entry.is_directory())
-                {
-                    auto& path = entry.path();
-                    auto folderName = path.stem().native();
-                    callback(entry.path(), folderName);
-                }
+            PS::ModLoadOrderHelper loadOrderHelper;
+            auto orderedMods = loadOrderHelper.Resolve(modsPath);
+
+            for (const auto& mod : orderedMods)
+            {
+                callback(mod.modPath, RC::to_generic_string(mod.folderName));
             }
         }
     }
