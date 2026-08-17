@@ -1,15 +1,73 @@
 #include "Utility/ModLoadOrderHelper.h"
 #include "Utility/Logging.h"
-#include "nlohmann/json.hpp"
 #include <algorithm>
 #include <fstream>
 #include <queue>
+#include <sstream>
 #include <unordered_map>
 #include <unordered_set>
 
 namespace fs = std::filesystem;
 
 namespace PS {
+    template<typename T>
+    bool ModLoadOrderHelper::TryReadJsonFile(const std::filesystem::path& path, T& outValue) const
+    {
+        auto readJson = [&](auto& value) {
+            if (path.extension() == ".jsonc")
+            {
+                return glz::read_file_jsonc(value, path.string(), std::string{});
+            }
+
+            return glz::read_file_json(value, path.string(), std::string{});
+        };
+
+        auto ec = readJson(outValue);
+        if (ec)
+        {
+            std::string errorMessage = glz::format_error(ec, std::string{});
+            PS::Log<RC::LogLevel::Error>(STR("Failed to parse JSON file '{}' - {}\n"), RC::to_generic_string(path.string()), RC::to_generic_string(errorMessage));
+            return false;
+        }
+
+        return true;
+    }
+
+    ModLoadOrderEntry ModLoadOrderHelper::BuildModEntry(const std::filesystem::path& modPath, const ModMetadata& metadata) const
+    {
+        ModLoadOrderEntry mod;
+        mod.modPath = modPath;
+        mod.folderName = modPath.filename().string();
+        mod.modId = mod.folderName;
+        mod.usesFallbackModId = true;
+
+        if (!metadata.mod_id.empty())
+        {
+            mod.modId = metadata.mod_id;
+            mod.usesFallbackModId = false;
+        }
+
+        mod.name = metadata.name;
+        mod.version = metadata.version;
+        mod.authors = metadata.authors;
+        mod.dependencies = metadata.dependencies;
+
+        if (mod.usesFallbackModId)
+        {
+            PS::Log<RC::LogLevel::Warning>(STR("Mod '{}' does not declare 'mod_id' in metadata. Falling back to folder name.\n"), RC::to_generic_string(mod.folderName));
+        }
+
+        return mod;
+    }
+
+    ModLoadOrderSettings ModLoadOrderHelper::BuildSettings(const SchemaModsConfig& config) const
+    {
+        ModLoadOrderSettings settings;
+        settings.explicitOrder = config.explicit_order;
+        settings.disabledMods = config.disabled_mods;
+        return settings;
+    }
+
     std::vector<ModLoadOrderEntry> ModLoadOrderHelper::Resolve(const std::filesystem::path& modsPath)
     {
         auto mods = DiscoverMods(modsPath);
@@ -56,76 +114,40 @@ namespace PS {
 
     ModLoadOrderEntry ModLoadOrderHelper::LoadModMetadata(const std::filesystem::path& modPath) const
     {
-        ModLoadOrderEntry mod;
-        mod.modPath = modPath;
-        mod.folderName = modPath.filename().string();
-        mod.modId = mod.folderName;
-        mod.usesFallbackModId = true;
-
         auto metadataPath = FindMetadataPath(modPath);
         if (metadataPath.empty())
         {
-            return mod;
+            return BuildModEntry(modPath, ModMetadata{});
         }
 
-        auto metadata = LoadJsonFile(metadataPath);
-        if (!metadata.is_object())
+        ModMetadata metadata{};
+        if (!TryReadJsonFile(metadataPath, metadata))
         {
-            return mod;
+            return BuildModEntry(modPath, ModMetadata{});
         }
 
-        if (metadata.contains("mod_id") && metadata.at("mod_id").is_string())
-        {
-            mod.modId = metadata.at("mod_id").get<std::string>();
-            mod.usesFallbackModId = false;
-        }
-
-        if (metadata.contains("name") && metadata.at("name").is_string())
-        {
-            mod.name = metadata.at("name").get<std::string>();
-        }
-
-        if (metadata.contains("version") && metadata.at("version").is_string())
-        {
-            mod.version = metadata.at("version").get<std::string>();
-        }
-
-        mod.authors = ReadStringArray(metadata, "authors");
-
-        mod.dependencies = ReadStringArray(metadata, "dependencies");
-
-        if (mod.usesFallbackModId)
-        {
-            PS::Log<RC::LogLevel::Warning>(STR("Mod '{}' does not declare 'mod_id' in metadata. Falling back to folder name.\n"), RC::to_generic_string(mod.folderName));
-        }
-
-        return mod;
+        return BuildModEntry(modPath, metadata);
     }
 
     ModLoadOrderSettings ModLoadOrderHelper::LoadSettings(const std::filesystem::path& modsPath) const
     {
-        ModLoadOrderSettings settings;
-
         auto loadOrderPath = FindLoadOrderPath(modsPath);
         if (loadOrderPath.empty())
         {
             PS::Log<RC::LogLevel::Warning>(STR("No schema_mods.json or schema_mods.jsonc found in '{}'.\n"), RC::to_generic_string(modsPath.string()));
-            return settings;
+            return {};
         }
 
         PS::Log<RC::LogLevel::Verbose>(STR("Using schema mods settings from '{}'.\n"), RC::to_generic_string(loadOrderPath.string()));
 
-        auto data = LoadJsonFile(loadOrderPath);
-        if (!data.is_object())
+        SchemaModsConfig config{};
+        if (!TryReadJsonFile(loadOrderPath, config))
         {
-            return settings;
+            return {};
         }
 
-        settings.explicitOrder = ReadStringArray(data, "explicit_order");
-        settings.disabledMods = ReadStringArray(data, "disabled_mods");
-
+        auto settings = BuildSettings(config);
         PS::Log<RC::LogLevel::Verbose>(STR("Schema mods settings loaded: explicit_order={}, disabled_mods={}.\n"), settings.explicitOrder.size(), settings.disabledMods.size());
-
         return settings;
     }
 
@@ -230,39 +252,34 @@ namespace PS {
         return activeMods;
     }
 
-    std::vector<ModLoadOrderEntry> ModLoadOrderHelper::SortMods(const std::vector<ModLoadOrderEntry>& mods, const ModLoadOrderSettings& settings) const
+    std::unordered_map<std::string, size_t> ModLoadOrderHelper::BuildModIndexMap(const std::vector<ModLoadOrderEntry>& mods) const
     {
-        std::vector<ModLoadOrderEntry> sortedMods;
-        if (mods.empty())
-        {
-            return sortedMods;
-        }
-
         std::unordered_map<std::string, size_t> modIndexById;
-        std::unordered_map<std::string, size_t> explicitRank;
-
         for (size_t index = 0; index < mods.size(); ++index)
         {
             modIndexById.emplace(mods[index].modId, index);
         }
 
+        return modIndexById;
+    }
+
+    std::unordered_map<std::string, size_t> ModLoadOrderHelper::BuildExplicitRankMap(const ModLoadOrderSettings& settings) const
+    {
+        std::unordered_map<std::string, size_t> explicitRank;
         for (size_t index = 0; index < settings.explicitOrder.size(); ++index)
         {
             explicitRank.emplace(settings.explicitOrder[index], index);
         }
 
-        for (const auto& modId : settings.explicitOrder)
-        {
-            if (!modIndexById.contains(modId))
-            {
-                PS::Log<RC::LogLevel::Warning>(STR("explicit_order references unknown mod id '{}'.\n"), RC::to_generic_string(modId));
-            }
-        }
+        return explicitRank;
+    }
 
-        std::vector<std::unordered_set<size_t>> edges(mods.size());
-        std::vector<size_t> indegree(mods.size(), 0);
-        std::unordered_set<uint64_t> metadataEdgeKeys;
-
+    void ModLoadOrderHelper::AddDependencyEdges(const std::vector<ModLoadOrderEntry>& mods,
+        const std::unordered_map<std::string, size_t>& modIndexById,
+        std::vector<std::unordered_set<size_t>>& edges,
+        std::vector<size_t>& indegree,
+        std::unordered_set<uint64_t>& metadataEdgeKeys) const
+    {
         auto makeEdgeKey = [](size_t fromIndex, size_t toIndex) {
             return (static_cast<uint64_t>(fromIndex) << 32) | static_cast<uint64_t>(toIndex);
         };
@@ -279,26 +296,6 @@ namespace PS {
             }
         };
 
-        auto addMetadataEdge = [&](size_t fromIndex, size_t toIndex) {
-            addEdge(fromIndex, toIndex);
-            metadataEdgeKeys.insert(makeEdgeKey(fromIndex, toIndex));
-        };
-
-        auto addOverrideEdge = [&](size_t fromIndex, size_t toIndex, const char* sourceField) {
-            if (metadataEdgeKeys.contains(makeEdgeKey(toIndex, fromIndex)))
-            {
-                PS::Log<RC::LogLevel::Warning>(
-                    STR("Skipping '{}' ordering edge because it conflicts with metadata dependency/order rules: '{}' -> '{}'.\n"),
-                    RC::to_generic_string(sourceField),
-                    RC::to_generic_string(mods[fromIndex].modId),
-                    RC::to_generic_string(mods[toIndex].modId)
-                );
-                return;
-            }
-
-            addEdge(fromIndex, toIndex);
-        };
-
         for (size_t index = 0; index < mods.size(); ++index)
         {
             const auto& mod = mods[index];
@@ -307,7 +304,8 @@ namespace PS {
             {
                 if (auto it = modIndexById.find(dependency); it != modIndexById.end())
                 {
-                    addMetadataEdge(it->second, index);
+                    addEdge(it->second, index);
+                    metadataEdgeKeys.insert(makeEdgeKey(it->second, index));
                 }
                 else
                 {
@@ -315,34 +313,107 @@ namespace PS {
                 }
             }
         }
+    }
+
+    void ModLoadOrderHelper::AddExplicitOrderEdges(const std::vector<ModLoadOrderEntry>& mods,
+        const ModLoadOrderSettings& settings,
+        const std::unordered_map<std::string, size_t>& modIndexById,
+        const std::unordered_set<uint64_t>& metadataEdgeKeys,
+        std::vector<std::unordered_set<size_t>>& edges,
+        std::vector<size_t>& indegree) const
+    {
+        auto makeEdgeKey = [](size_t fromIndex, size_t toIndex) {
+            return (static_cast<uint64_t>(fromIndex) << 32) | static_cast<uint64_t>(toIndex);
+        };
+
+        auto addEdge = [&](size_t fromIndex, size_t toIndex) {
+            if (fromIndex == toIndex)
+            {
+                return;
+            }
+
+            if (edges[fromIndex].insert(toIndex).second)
+            {
+                indegree[toIndex] += 1;
+            }
+        };
 
         for (size_t index = 1; index < settings.explicitOrder.size(); ++index)
         {
             auto previous = modIndexById.find(settings.explicitOrder[index - 1]);
             auto current = modIndexById.find(settings.explicitOrder[index]);
-            if (previous != modIndexById.end() && current != modIndexById.end())
+            if (previous == modIndexById.end() || current == modIndexById.end())
             {
-                addOverrideEdge(previous->second, current->second, "explicit_order");
+                continue;
+            }
+
+            const auto fromIndex = previous->second;
+            const auto toIndex = current->second;
+            if (metadataEdgeKeys.contains(makeEdgeKey(toIndex, fromIndex)))
+            {
+                PS::Log<RC::LogLevel::Warning>(
+                    STR("Skipping 'explicit_order' ordering edge because it conflicts with metadata dependency/order rules: '{}' -> '{}'.\n"),
+                    RC::to_generic_string(mods[fromIndex].modId),
+                    RC::to_generic_string(mods[toIndex].modId)
+                );
+                continue;
+            }
+
+            addEdge(fromIndex, toIndex);
+        }
+    }
+
+    bool ModLoadOrderHelper::CompareModIndices(const std::vector<ModLoadOrderEntry>& mods,
+        const std::unordered_map<std::string, size_t>& explicitRank,
+        size_t leftIndex,
+        size_t rightIndex) const
+    {
+        const auto getRank = [](const auto& ranks, const std::string& modId) {
+            auto it = ranks.find(modId);
+            return it == ranks.end() ? std::numeric_limits<size_t>::max() : it->second;
+        };
+
+        const auto& left = mods[leftIndex];
+        const auto& right = mods[rightIndex];
+
+        auto leftExplicitRank = getRank(explicitRank, left.modId);
+        auto rightExplicitRank = getRank(explicitRank, right.modId);
+        if (leftExplicitRank != rightExplicitRank)
+        {
+            return leftExplicitRank > rightExplicitRank;
+        }
+
+        return left.folderName > right.folderName;
+    }
+
+    std::vector<ModLoadOrderEntry> ModLoadOrderHelper::SortMods(const std::vector<ModLoadOrderEntry>& mods, const ModLoadOrderSettings& settings) const
+    {
+        std::vector<ModLoadOrderEntry> sortedMods;
+        if (mods.empty())
+        {
+            return sortedMods;
+        }
+
+        const auto modIndexById = BuildModIndexMap(mods);
+        const auto explicitRank = BuildExplicitRankMap(settings);
+
+        for (const auto& modId : settings.explicitOrder)
+        {
+            if (!modIndexById.contains(modId))
+            {
+                PS::Log<RC::LogLevel::Warning>(STR("explicit_order references unknown mod id '{}'.\n"), RC::to_generic_string(modId));
             }
         }
 
+        std::vector<std::unordered_set<size_t>> edges(mods.size());
+        std::vector<size_t> indegree(mods.size(), 0);
+        std::unordered_set<uint64_t> metadataEdgeKeys;
+
+        AddDependencyEdges(mods, modIndexById, edges, indegree, metadataEdgeKeys);
+        AddExplicitOrderEdges(mods, settings, modIndexById, metadataEdgeKeys, edges, indegree);
+
         auto compareIndices = [&](size_t leftIndex, size_t rightIndex) {
-            const auto getRank = [](const auto& ranks, const std::string& modId) {
-                auto it = ranks.find(modId);
-                return it == ranks.end() ? std::numeric_limits<size_t>::max() : it->second;
-            };
-
-            const auto& left = mods[leftIndex];
-            const auto& right = mods[rightIndex];
-
-            auto leftExplicitRank = getRank(explicitRank, left.modId);
-            auto rightExplicitRank = getRank(explicitRank, right.modId);
-            if (leftExplicitRank != rightExplicitRank)
-            {
-                return leftExplicitRank > rightExplicitRank;
-            }
-
-            return left.folderName > right.folderName;
+            return CompareModIndices(mods, explicitRank, leftIndex, rightIndex);
         };
 
         std::priority_queue<size_t, std::vector<size_t>, decltype(compareIndices)> available(compareIndices);
@@ -407,56 +478,5 @@ namespace PS {
         }
 
         return sortedMods;
-    }
-
-    std::vector<std::string> ModLoadOrderHelper::ReadStringArray(const nlohmann::json& data, const std::string& fieldName) const
-    {
-        std::vector<std::string> values;
-
-        if (!data.contains(fieldName))
-        {
-            return values;
-        }
-
-        const auto& field = data.at(fieldName);
-        if (!field.is_array())
-        {
-            PS::Log<RC::LogLevel::Warning>(STR("Field '{}' must be an array of strings.\n"), RC::to_generic_string(fieldName));
-            return values;
-        }
-
-        for (const auto& item : field)
-        {
-            if (!item.is_string())
-            {
-                PS::Log<RC::LogLevel::Warning>(STR("Field '{}' contains a non-string entry.\n"), RC::to_generic_string(fieldName));
-                continue;
-            }
-
-            values.push_back(item.get<std::string>());
-        }
-
-        return values;
-    }
-
-    nlohmann::json ModLoadOrderHelper::LoadJsonFile(const std::filesystem::path& path) const
-    {
-        std::ifstream stream(path);
-        if (!stream.is_open())
-        {
-            PS::Log<RC::LogLevel::Warning>(STR("Unable to open JSON file '{}'.\n"), RC::to_generic_string(path.string()));
-            return nlohmann::json::object();
-        }
-
-        try
-        {
-            auto ignoreComments = path.extension() == ".jsonc";
-            return nlohmann::json::parse(stream, nullptr, true, ignoreComments);
-        }
-        catch (const std::exception& e)
-        {
-            PS::Log<RC::LogLevel::Error>(STR("Failed to parse JSON file '{}' - {}\n"), RC::to_generic_string(path.string()), RC::to_generic_string(e.what()));
-            return nlohmann::json::object();
-        }
     }
 }
