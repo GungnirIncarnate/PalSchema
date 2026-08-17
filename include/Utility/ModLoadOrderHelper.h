@@ -14,17 +14,11 @@ namespace PS {
         std::string version = "";
         std::vector<std::string> authors{};
         bool usesFallbackModId = false;
-        bool hasLoadPriority = false;
-        int loadPriority = 100;
         std::vector<std::string> dependencies{};
-        std::vector<std::string> loadAfter{};
-        std::vector<std::string> loadBefore{};
     };
 
     struct ModLoadOrderSettings {
-        std::vector<std::string> loadFirst{};
         std::vector<std::string> explicitOrder{};
-        std::vector<std::string> loadLast{};
         std::vector<std::string> disabledMods{};
     };
 
@@ -41,6 +35,7 @@ namespace PS {
         std::filesystem::path FindLoadOrderPath(const std::filesystem::path& modsPath) const;
 
         std::vector<ModLoadOrderEntry> FilterDisabledMods(const std::vector<ModLoadOrderEntry>& mods, const ModLoadOrderSettings& settings) const;
+        std::vector<ModLoadOrderEntry> FilterMissingDependencies(const std::vector<ModLoadOrderEntry>& mods) const;
         std::vector<ModLoadOrderEntry> SortMods(const std::vector<ModLoadOrderEntry>& mods, const ModLoadOrderSettings& settings) const;
 
         std::vector<std::string> ReadStringArray(const nlohmann::json& data, const std::string& fieldName) const;

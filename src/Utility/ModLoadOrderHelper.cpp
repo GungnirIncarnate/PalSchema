@@ -15,7 +15,8 @@ namespace PS {
         auto mods = DiscoverMods(modsPath);
         auto settings = LoadSettings(modsPath);
         auto filteredMods = FilterDisabledMods(mods, settings);
-        return SortMods(filteredMods, settings);
+        auto dependencyValidMods = FilterMissingDependencies(filteredMods);
+        return SortMods(dependencyValidMods, settings);
     }
 
     std::vector<ModLoadOrderEntry> ModLoadOrderHelper::DiscoverMods(const std::filesystem::path& modsPath) const
@@ -91,15 +92,7 @@ namespace PS {
 
         mod.authors = ReadStringArray(metadata, "authors");
 
-        if (metadata.contains("load_priority") && metadata.at("load_priority").is_number_integer())
-        {
-            mod.loadPriority = metadata.at("load_priority").get<int>();
-            mod.hasLoadPriority = true;
-        }
-
         mod.dependencies = ReadStringArray(metadata, "dependencies");
-        mod.loadAfter = ReadStringArray(metadata, "load_after");
-        mod.loadBefore = ReadStringArray(metadata, "load_before");
 
         if (mod.usesFallbackModId)
         {
@@ -116,11 +109,11 @@ namespace PS {
         auto loadOrderPath = FindLoadOrderPath(modsPath);
         if (loadOrderPath.empty())
         {
-            PS::Log<RC::LogLevel::Warning>(STR("No load_order.json or load_order.jsonc found in '{}'.\n"), RC::to_generic_string(modsPath.string()));
+            PS::Log<RC::LogLevel::Warning>(STR("No schema_mods.json or schema_mods.jsonc found in '{}'.\n"), RC::to_generic_string(modsPath.string()));
             return settings;
         }
 
-        PS::Log<RC::LogLevel::Verbose>(STR("Using load order settings from '{}'.\n"), RC::to_generic_string(loadOrderPath.string()));
+        PS::Log<RC::LogLevel::Verbose>(STR("Using schema mods settings from '{}'.\n"), RC::to_generic_string(loadOrderPath.string()));
 
         auto data = LoadJsonFile(loadOrderPath);
         if (!data.is_object())
@@ -128,12 +121,10 @@ namespace PS {
             return settings;
         }
 
-        settings.loadFirst = ReadStringArray(data, "load_first");
         settings.explicitOrder = ReadStringArray(data, "explicit_order");
-        settings.loadLast = ReadStringArray(data, "load_last");
         settings.disabledMods = ReadStringArray(data, "disabled_mods");
 
-        PS::Log<RC::LogLevel::Verbose>(STR("Load order settings loaded: load_first={}, explicit_order={}, load_last={}, disabled_mods={}.\n"), settings.loadFirst.size(), settings.explicitOrder.size(), settings.loadLast.size(), settings.disabledMods.size());
+        PS::Log<RC::LogLevel::Verbose>(STR("Schema mods settings loaded: explicit_order={}, disabled_mods={}.\n"), settings.explicitOrder.size(), settings.disabledMods.size());
 
         return settings;
     }
@@ -157,13 +148,13 @@ namespace PS {
 
     std::filesystem::path ModLoadOrderHelper::FindLoadOrderPath(const std::filesystem::path& modsPath) const
     {
-        auto jsonPath = modsPath / "load_order.json";
+        auto jsonPath = modsPath / "schema_mods.json";
         if (fs::exists(jsonPath) && fs::is_regular_file(jsonPath))
         {
             return jsonPath;
         }
 
-        auto jsoncPath = modsPath / "load_order.jsonc";
+        auto jsoncPath = modsPath / "schema_mods.jsonc";
         if (fs::exists(jsoncPath) && fs::is_regular_file(jsoncPath))
         {
             return jsoncPath;
@@ -192,6 +183,53 @@ namespace PS {
         return filteredMods;
     }
 
+    std::vector<ModLoadOrderEntry> ModLoadOrderHelper::FilterMissingDependencies(const std::vector<ModLoadOrderEntry>& mods) const
+    {
+        std::vector<ModLoadOrderEntry> activeMods = mods;
+        bool hasChanges = true;
+
+        while (hasChanges)
+        {
+            hasChanges = false;
+
+            std::unordered_set<std::string> activeModIds;
+            activeModIds.reserve(activeMods.size());
+            for (const auto& mod : activeMods)
+            {
+                activeModIds.insert(mod.modId);
+            }
+
+            std::vector<ModLoadOrderEntry> nextPassMods;
+            nextPassMods.reserve(activeMods.size());
+
+            for (const auto& mod : activeMods)
+            {
+                bool hasMissingDependency = false;
+
+                for (const auto& dependency : mod.dependencies)
+                {
+                    if (!activeModIds.contains(dependency))
+                    {
+                        const auto& displayName = mod.name.empty() ? mod.modId : mod.name;
+                        PS::Log<RC::LogLevel::Warning>(STR("Skipping mod '{}' because required dependency '{}' is missing or disabled.\n"), RC::to_generic_string(displayName), RC::to_generic_string(dependency));
+                        hasMissingDependency = true;
+                        hasChanges = true;
+                        break;
+                    }
+                }
+
+                if (!hasMissingDependency)
+                {
+                    nextPassMods.push_back(mod);
+                }
+            }
+
+            activeMods = std::move(nextPassMods);
+        }
+
+        return activeMods;
+    }
+
     std::vector<ModLoadOrderEntry> ModLoadOrderHelper::SortMods(const std::vector<ModLoadOrderEntry>& mods, const ModLoadOrderSettings& settings) const
     {
         std::vector<ModLoadOrderEntry> sortedMods;
@@ -201,21 +239,11 @@ namespace PS {
         }
 
         std::unordered_map<std::string, size_t> modIndexById;
-        std::unordered_map<std::string, size_t> loadFirstRank;
         std::unordered_map<std::string, size_t> explicitRank;
-        std::unordered_map<std::string, size_t> loadLastRank;
-        std::unordered_set<std::string> loadFirstIds(settings.loadFirst.begin(), settings.loadFirst.end());
-        std::unordered_set<std::string> explicitIds(settings.explicitOrder.begin(), settings.explicitOrder.end());
-        std::unordered_set<std::string> loadLastIds(settings.loadLast.begin(), settings.loadLast.end());
 
         for (size_t index = 0; index < mods.size(); ++index)
         {
             modIndexById.emplace(mods[index].modId, index);
-        }
-
-        for (size_t index = 0; index < settings.loadFirst.size(); ++index)
-        {
-            loadFirstRank.emplace(settings.loadFirst[index], index);
         }
 
         for (size_t index = 0; index < settings.explicitOrder.size(); ++index)
@@ -223,32 +251,11 @@ namespace PS {
             explicitRank.emplace(settings.explicitOrder[index], index);
         }
 
-        for (size_t index = 0; index < settings.loadLast.size(); ++index)
-        {
-            loadLastRank.emplace(settings.loadLast[index], index);
-        }
-
-        for (const auto& modId : settings.loadFirst)
-        {
-            if (!modIndexById.contains(modId))
-            {
-                PS::Log<RC::LogLevel::Warning>(STR("load_first references unknown mod id '{}'.\n"), RC::to_generic_string(modId));
-            }
-        }
-
         for (const auto& modId : settings.explicitOrder)
         {
             if (!modIndexById.contains(modId))
             {
                 PS::Log<RC::LogLevel::Warning>(STR("explicit_order references unknown mod id '{}'.\n"), RC::to_generic_string(modId));
-            }
-        }
-
-        for (const auto& modId : settings.loadLast)
-        {
-            if (!modIndexById.contains(modId))
-            {
-                PS::Log<RC::LogLevel::Warning>(STR("load_last references unknown mod id '{}'.\n"), RC::to_generic_string(modId));
             }
         }
 
@@ -307,40 +314,6 @@ namespace PS {
                     PS::Log<RC::LogLevel::Warning>(STR("Mod '{}' depends on unknown mod id '{}'.\n"), RC::to_generic_string(mod.modId), RC::to_generic_string(dependency));
                 }
             }
-
-            for (const auto& dependency : mod.loadAfter)
-            {
-                if (auto it = modIndexById.find(dependency); it != modIndexById.end())
-                {
-                    addMetadataEdge(it->second, index);
-                }
-                else
-                {
-                    PS::Log<RC::LogLevel::Warning>(STR("Mod '{}' load_after references unknown mod id '{}'.\n"), RC::to_generic_string(mod.modId), RC::to_generic_string(dependency));
-                }
-            }
-
-            for (const auto& dependency : mod.loadBefore)
-            {
-                if (auto it = modIndexById.find(dependency); it != modIndexById.end())
-                {
-                    addMetadataEdge(index, it->second);
-                }
-                else
-                {
-                    PS::Log<RC::LogLevel::Warning>(STR("Mod '{}' load_before references unknown mod id '{}'.\n"), RC::to_generic_string(mod.modId), RC::to_generic_string(dependency));
-                }
-            }
-        }
-
-        for (size_t index = 1; index < settings.loadFirst.size(); ++index)
-        {
-            auto previous = modIndexById.find(settings.loadFirst[index - 1]);
-            auto current = modIndexById.find(settings.loadFirst[index]);
-            if (previous != modIndexById.end() && current != modIndexById.end())
-            {
-                addOverrideEdge(previous->second, current->second, "load_first");
-            }
         }
 
         for (size_t index = 1; index < settings.explicitOrder.size(); ++index)
@@ -353,45 +326,6 @@ namespace PS {
             }
         }
 
-        for (size_t index = 1; index < settings.loadLast.size(); ++index)
-        {
-            auto previous = modIndexById.find(settings.loadLast[index - 1]);
-            auto current = modIndexById.find(settings.loadLast[index]);
-            if (previous != modIndexById.end() && current != modIndexById.end())
-            {
-                addOverrideEdge(previous->second, current->second, "load_last");
-            }
-        }
-
-        for (size_t left = 0; left < mods.size(); ++left)
-        {
-            for (size_t right = 0; right < mods.size(); ++right)
-            {
-                if (left == right)
-                {
-                    continue;
-                }
-
-                const auto& leftMod = mods[left];
-                const auto& rightMod = mods[right];
-
-                if (loadFirstIds.contains(leftMod.modId) && !loadFirstIds.contains(rightMod.modId))
-                {
-                    addOverrideEdge(left, right, "load_first");
-                }
-
-                if (explicitIds.contains(leftMod.modId) && !loadFirstIds.contains(rightMod.modId) && !explicitIds.contains(rightMod.modId))
-                {
-                    addOverrideEdge(left, right, "explicit_order");
-                }
-
-                if (loadLastIds.contains(rightMod.modId) && !loadLastIds.contains(leftMod.modId))
-                {
-                    addOverrideEdge(left, right, "load_last");
-                }
-            }
-        }
-
         auto compareIndices = [&](size_t leftIndex, size_t rightIndex) {
             const auto getRank = [](const auto& ranks, const std::string& modId) {
                 auto it = ranks.find(modId);
@@ -401,35 +335,11 @@ namespace PS {
             const auto& left = mods[leftIndex];
             const auto& right = mods[rightIndex];
 
-            auto leftLoadFirstRank = getRank(loadFirstRank, left.modId);
-            auto rightLoadFirstRank = getRank(loadFirstRank, right.modId);
-            if (leftLoadFirstRank != rightLoadFirstRank)
-            {
-                return leftLoadFirstRank > rightLoadFirstRank;
-            }
-
             auto leftExplicitRank = getRank(explicitRank, left.modId);
             auto rightExplicitRank = getRank(explicitRank, right.modId);
             if (leftExplicitRank != rightExplicitRank)
             {
                 return leftExplicitRank > rightExplicitRank;
-            }
-
-            if (left.hasLoadPriority != right.hasLoadPriority)
-            {
-                return left.hasLoadPriority < right.hasLoadPriority;
-            }
-
-            if (left.hasLoadPriority && right.hasLoadPriority && left.loadPriority != right.loadPriority)
-            {
-                return left.loadPriority > right.loadPriority;
-            }
-
-            auto leftLoadLastRank = getRank(loadLastRank, left.modId);
-            auto rightLoadLastRank = getRank(loadLastRank, right.modId);
-            if (leftLoadLastRank != rightLoadLastRank)
-            {
-                return leftLoadLastRank > rightLoadLastRank;
             }
 
             return left.folderName > right.folderName;
