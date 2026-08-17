@@ -70,6 +70,8 @@ namespace Palworld {
 
     void PalMainLoader::AutoReload(const std::filesystem::path& filePath)
     {
+        m_modOrderDirty = true;
+
         // Skip to the PalSchema folder and start our iterator from there
         auto it = std::find_if(filePath.begin(), filePath.end(),
             [](const auto& p) { return p == "PalSchema"; });
@@ -113,18 +115,32 @@ namespace Palworld {
         });
     }
 
-    void PalMainLoader::IterateModsFolder(const std::function<void(const std::filesystem::path&, const RC::StringType&)>& callback)
+    void PalMainLoader::RefreshOrderedMods()
     {
-        static auto modsPath = fs::path(UE4SSProgram::get_program().get_working_directory()) / "Mods" / "PalSchema" / "mods";
+        if (!m_modOrderDirty)
+        {
+            return;
+        }
+
+        const auto modsPath = GetModsPath();
+        m_orderedMods.clear();
+
         if (fs::exists(modsPath))
         {
             PS::ModLoadOrderHelper loadOrderHelper;
-            auto orderedMods = loadOrderHelper.Resolve(modsPath);
+            m_orderedMods = loadOrderHelper.Resolve(modsPath);
+        }
 
-            for (const auto& mod : orderedMods)
-            {
-                callback(mod.modPath, RC::to_generic_string(mod.folderName));
-            }
+        m_modOrderDirty = false;
+    }
+
+    void PalMainLoader::IterateModsFolder(const std::function<void(const std::filesystem::path&, const RC::StringType&)>& callback)
+    {
+        RefreshOrderedMods();
+
+        for (const auto& mod : m_orderedMods)
+        {
+            callback(mod.modPath, RC::to_generic_string(mod.folderName));
         }
     }
 
@@ -293,6 +309,7 @@ namespace Palworld {
 
     void PalMainLoader::LoadMods(EEngineLifecyclePhase engineLifecyclePhase)
     {
+        m_modOrderDirty = true;
         IterateModsFolder([&](const fs::path& modPath, const fs::path::string_type& modName)
         {
             try

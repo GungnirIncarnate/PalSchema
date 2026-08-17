@@ -2,8 +2,10 @@
 
 #include <vector>
 #include <functional>
+#include <filesystem>
 #include "Loader/PalResourceLoader.h"
 #include "SDK/Classes/Custom/UDataTableStore.h"
+#include "Utility/ModLoadOrderHelper.h"
 #include "safetyhook.hpp"
 
 namespace RC::Unreal {
@@ -34,13 +36,15 @@ namespace Palworld {
 		void Initialize();
 	private:
         std::vector<std::unique_ptr<PalModLoaderBase>> m_loaders;
+        std::vector<PS::ModLoadOrderEntry> m_orderedMods;
+        bool m_modOrderDirty = true;
 
         std::unique_ptr<PS::FileWatchWrapper> m_fileWatcher;
 
         UECustom::UDataTableRegistry m_datatableRegistry;
 
         void AutoReload(const std::filesystem::path& filePath);
-
+        void RefreshOrderedMods();
         void IterateModsFolder(const std::function<void(const std::filesystem::path&, const RC::StringType&)>& callback);
 
         void SetupPostEngineInitLoaders();
