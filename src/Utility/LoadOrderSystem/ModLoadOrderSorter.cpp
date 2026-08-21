@@ -151,7 +151,7 @@ namespace PS {
         {
             if (!modIndexById.contains(modId))
             {
-                PS::Log<RC::LogLevel::Warning>(STR("explicit_order references unknown mod id '{}'.\n"), RC::to_generic_string(modId));
+                PS::Log<RC::LogLevel::Verbose>(STR("explicit_order references unknown mod id '{}'.\n"), RC::to_generic_string(modId));
             }
         }
 
