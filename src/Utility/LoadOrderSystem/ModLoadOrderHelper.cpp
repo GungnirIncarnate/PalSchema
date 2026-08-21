@@ -52,7 +52,7 @@ namespace PS {
 
         if (mod.usesFallbackModId)
         {
-            PS::Log<RC::LogLevel::Warning>(STR("Mod '{}' does not declare 'mod_id' in metadata. Falling back to folder name.\n"), RC::to_generic_string(mod.folderName));
+            PS::Log<RC::LogLevel::Verbose>(STR("Mod '{}' does not declare 'mod_id' in metadata. Falling back to folder name.\n"), RC::to_generic_string(mod.folderName));
         }
 
         return mod;

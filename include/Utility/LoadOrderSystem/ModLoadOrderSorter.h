@@ -10,8 +10,6 @@
 namespace PS {
     class ModLoadOrderSorter {
     public:
-        std::vector<ModLoadOrderEntry> FilterDisabledMods(const std::vector<ModLoadOrderEntry>& mods, const ModLoadOrderSettings& settings) const;
-        std::vector<ModLoadOrderEntry> FilterMissingDependencies(const std::vector<ModLoadOrderEntry>& mods) const;
         std::vector<ModLoadOrderEntry> SortMods(const std::vector<ModLoadOrderEntry>& mods, const ModLoadOrderSettings& settings) const;
 
     private:

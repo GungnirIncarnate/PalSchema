@@ -6,73 +6,6 @@
 #include <unordered_set>
 
 namespace PS {
-    std::vector<ModLoadOrderEntry> ModLoadOrderSorter::FilterDisabledMods(const std::vector<ModLoadOrderEntry>& mods, const ModLoadOrderSettings& settings) const
-    {
-        std::unordered_set<std::string> disabledIds(settings.disabledMods.begin(), settings.disabledMods.end());
-        std::vector<ModLoadOrderEntry> filteredMods;
-        filteredMods.reserve(mods.size());
-
-        for (const auto& mod : mods)
-        {
-            if (disabledIds.contains(mod.modId))
-            {
-                PS::Log<RC::LogLevel::Verbose>(STR("Skipping disabled mod '{}'.\n"), RC::to_generic_string(mod.modId));
-                continue;
-            }
-
-            filteredMods.push_back(mod);
-        }
-
-        return filteredMods;
-    }
-
-    std::vector<ModLoadOrderEntry> ModLoadOrderSorter::FilterMissingDependencies(const std::vector<ModLoadOrderEntry>& mods) const
-    {
-        std::vector<ModLoadOrderEntry> activeMods = mods;
-        bool hasChanges = true;
-
-        while (hasChanges)
-        {
-            hasChanges = false;
-
-            std::unordered_set<std::string> activeModIds;
-            activeModIds.reserve(activeMods.size());
-            for (const auto& mod : activeMods)
-            {
-                activeModIds.insert(mod.modId);
-            }
-
-            std::vector<ModLoadOrderEntry> nextPassMods;
-            nextPassMods.reserve(activeMods.size());
-
-            for (const auto& mod : activeMods)
-            {
-                bool hasMissingDependency = false;
-
-                for (const auto& dependency : mod.dependencies)
-                {
-                    if (!activeModIds.contains(dependency))
-                    {
-                        const auto& displayName = mod.name.empty() ? mod.modId : mod.name;
-                        PS::Log<RC::LogLevel::Warning>(STR("Skipping mod '{}' because required dependency '{}' is missing or disabled.\n"), RC::to_generic_string(displayName), RC::to_generic_string(dependency));
-                        hasMissingDependency = true;
-                        hasChanges = true;
-                        break;
-                    }
-                }
-
-                if (!hasMissingDependency)
-                {
-                    nextPassMods.push_back(mod);
-                }
-            }
-
-            activeMods = std::move(nextPassMods);
-        }
-
-        return activeMods;
-    }
-
     std::unordered_map<std::string, size_t> ModLoadOrderSorter::BuildModIndexMap(const std::vector<ModLoadOrderEntry>& mods) const
     {
         std::unordered_map<std::string, size_t> modIndexById;
@@ -127,10 +60,6 @@ namespace PS {
                 {
                     addEdge(it->second, index);
                     metadataEdgeKeys.insert(makeEdgeKey(it->second, index));
-                }
-                else
-                {
-                    PS::Log<RC::LogLevel::Warning>(STR("Mod '{}' depends on unknown mod id '{}'.\n"), RC::to_generic_string(mod.modId), RC::to_generic_string(dependency));
                 }
             }
         }
@@ -291,11 +220,6 @@ namespace PS {
             {
                 sortedMods.push_back(mods[unresolvedIndex]);
             }
-        }
-
-        for (size_t index = 0; index < sortedMods.size(); ++index)
-        {
-            PS::Log<RC::LogLevel::Verbose>(STR("Resolved load order [{}]: '{}' (folder '{}')\n"), index, RC::to_generic_string(sortedMods[index].modId), RC::to_generic_string(sortedMods[index].folderName));
         }
 
         return sortedMods;
