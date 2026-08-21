@@ -80,7 +80,6 @@ namespace PS {
     std::vector<ModLoadOrderEntry> ModLoadOrderHelper::DiscoverMods(const std::filesystem::path& modsPath) const
     {
         std::vector<ModLoadOrderEntry> mods;
-        std::unordered_set<std::string> seenModIds;
 
         if (!fs::exists(modsPath))
         {
@@ -100,14 +99,43 @@ namespace PS {
                 continue;
             }
 
-            if (!seenModIds.insert(mod.modId).second)
-            {
-                PS::Log<RC::LogLevel::Error>(STR("Duplicate mod id '{}' found. Skipping folder '{}'.\n"), RC::to_generic_string(mod.modId), RC::to_generic_string(mod.folderName));
-                continue;
-            }
-
             mods.push_back(std::move(mod));
         }
+
+        std::unordered_map<std::string, std::vector<std::string>> foldersByModId;
+        for (const auto& mod : mods)
+        {
+            foldersByModId[mod.modId].push_back(mod.folderName);
+        }
+
+        std::unordered_set<std::string> conflictingModIds;
+        for (const auto& [modId, folderNames] : foldersByModId)
+        {
+            if (folderNames.size() > 1)
+            {
+                std::ostringstream folders;
+                for (size_t index = 0; index < folderNames.size(); ++index)
+                {
+                    if (index > 0)
+                    {
+                        folders << ", ";
+                    }
+
+                    folders << "'" << folderNames[index] << "'";
+                }
+
+                PS::Log<RC::LogLevel::Error>(
+                    STR("Duplicate mod id '{}' found in folders {}. Skipping all conflicting mods.\n"),
+                    RC::to_generic_string(modId),
+                    RC::to_generic_string(folders.str())
+                );
+                conflictingModIds.insert(modId);
+            }
+        }
+
+        std::erase_if(mods, [&](const auto& mod) {
+            return conflictingModIds.contains(mod.modId);
+        });
 
         return mods;
     }
