@@ -5,7 +5,7 @@
 #include <filesystem>
 #include "Loader/PalResourceLoader.h"
 #include "SDK/Classes/Custom/UDataTableStore.h"
-#include "Utility/ModLoadOrderHelper.h"
+#include "Utility/LoadOrderSystem/ModLoadOrderHelper.h"
 #include "safetyhook.hpp"
 
 namespace RC::Unreal {

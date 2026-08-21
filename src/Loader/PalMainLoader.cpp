@@ -4,7 +4,7 @@
 #include "Unreal/UFunction.hpp"
 #include "Unreal/Hooks.hpp"
 #include "Utility/Config.h"
-#include "Utility/ModLoadOrderHelper.h"
+#include "Utility/LoadOrderSystem/ModLoadOrderHelper.h"
 #include "Utility/Logging.h"
 #include "SDK/Classes/Async.h"
 #include "SDK/Classes/Custom/UDataTableStore.h"
