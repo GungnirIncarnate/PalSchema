@@ -34,9 +34,11 @@ namespace Palworld {
 		void PreInitialize();
 
 		void Initialize();
+
+    PS::ModLoadPlan GetModLoadPlanSnapshot() const;
 	private:
         std::vector<std::unique_ptr<PalModLoaderBase>> m_loaders;
-        std::vector<PS::ModLoadOrderEntry> m_orderedMods;
+    PS::ModLoadPlan m_modLoadPlan;
         bool m_modOrderDirty = true;
 
         std::unique_ptr<PS::FileWatchWrapper> m_fileWatcher;

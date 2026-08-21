@@ -1,6 +1,7 @@
 #include "Mod/CppUserModBase.hpp"
 #include "UE4SSProgram.hpp"
 #include "Loader/PalMainLoader.h"
+#include "Utility/LoadOrderSystem/ModLoadOrderGui.h"
 #include "Generator/JsonSchema/JsonSchemaGenerator.h"
 #include "Utility/Config.h"
 #include "Utility/Logging.h"
@@ -15,7 +16,7 @@ using namespace RC::Unreal;
 class PalSchema : public RC::CppUserModBase
 {
 public:
-    PalSchema() : CppUserModBase()
+    PalSchema() : CppUserModBase(), m_modLoadOrderGui(MainLoader)
     {
         auto Version = std::format(STR("{}.{}.{}"), VERSION_MAJOR, VERSION_MINOR, VERSION_REVISION);
 
@@ -90,6 +91,9 @@ public:
 
             ImGui::SeparatorText("Generators");
             mod->render_schema_generator();
+
+            ImGui::SeparatorText("Schema Mods");
+            mod->m_modLoadOrderGui.RenderMods();
         });
 
         PS::Log<LogLevel::Verbose>(STR("Finished registering Pal Schema tab for GUI Console.\n"));
@@ -109,6 +113,7 @@ public:
     }
 private:
     Palworld::PalMainLoader MainLoader;
+    PS::ModLoadOrderGui m_modLoadOrderGui;
 };
 
 

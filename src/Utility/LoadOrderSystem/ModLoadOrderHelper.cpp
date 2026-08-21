@@ -1,10 +1,9 @@
 #include "Utility/LoadOrderSystem/ModLoadOrderHelper.h"
 #include "Utility/LoadOrderSystem/ModLoadOrderSorter.h"
 #include "Utility/Logging.h"
+#include <algorithm>
 #include <fstream>
 #include <sstream>
-#include <unordered_map>
-#include <unordered_set>
 
 namespace fs = std::filesystem;
 
@@ -67,14 +66,142 @@ namespace PS {
         return settings;
     }
 
-    std::vector<ModLoadOrderEntry> ModLoadOrderHelper::Resolve(const std::filesystem::path& modsPath)
+    ModLoadPlan ModLoadOrderHelper::Resolve(const std::filesystem::path& modsPath)
     {
+        ModLoadPlan plan;
+        plan.modsPath = modsPath;
         auto mods = DiscoverMods(modsPath);
-        auto settings = LoadSettings(modsPath);
+        plan.settings = LoadSettings(modsPath);
+
+        plan.entries.reserve(mods.size());
+        for (auto& mod : mods)
+        {
+            plan.entries.push_back({ std::move(mod), ModLoadStatus::Loaded, {} });
+        }
+
+        std::unordered_map<std::string, std::vector<std::string>> foldersByModId;
+        for (const auto& entry : plan.entries)
+        {
+            foldersByModId[entry.mod.modId].push_back(entry.mod.folderName);
+        }
+
+        for (auto& entry : plan.entries)
+        {
+            const auto& conflictingFolders = foldersByModId[entry.mod.modId];
+            if (conflictingFolders.size() > 1)
+            {
+                std::ostringstream reason;
+                reason << "Duplicate ID with ";
+                bool hasOtherFolder = false;
+                for (const auto& folderName : conflictingFolders)
+                {
+                    if (folderName == entry.mod.folderName)
+                    {
+                        continue;
+                    }
+
+                    if (hasOtherFolder)
+                    {
+                        reason << ", ";
+                    }
+
+                    reason << "'" << folderName << "'";
+                    hasOtherFolder = true;
+                }
+
+                entry.status = ModLoadStatus::DuplicateId;
+                entry.reason = reason.str();
+            }
+        }
+
+        std::unordered_set<std::string> disabledIds(plan.settings.disabledMods.begin(), plan.settings.disabledMods.end());
+        for (auto& entry : plan.entries)
+        {
+            if (entry.status == ModLoadStatus::Loaded && disabledIds.contains(entry.mod.modId))
+            {
+                entry.status = ModLoadStatus::Disabled;
+                entry.reason = "Listed in disabled_mods";
+            }
+        }
+
+        std::vector<ModLoadOrderEntry> activeMods;
+        for (const auto& entry : plan.entries)
+        {
+            if (entry.status == ModLoadStatus::Loaded)
+            {
+                activeMods.push_back(entry.mod);
+            }
+        }
+
+        bool hasChanges = true;
+        while (hasChanges)
+        {
+            hasChanges = false;
+            std::unordered_set<std::string> activeIds;
+            for (const auto& entry : plan.entries)
+            {
+                if (entry.status == ModLoadStatus::Loaded)
+                {
+                    activeIds.insert(entry.mod.modId);
+                }
+            }
+
+            for (auto& entry : plan.entries)
+            {
+                if (entry.status != ModLoadStatus::Loaded)
+                {
+                    continue;
+                }
+
+                for (const auto& dependency : entry.mod.dependencies)
+                {
+                    if (!activeIds.contains(dependency))
+                    {
+                        entry.status = ModLoadStatus::MissingDependency;
+                        entry.reason = "Required dependency '" + dependency + "' is missing or disabled";
+                        hasChanges = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        activeMods.clear();
+        for (const auto& entry : plan.entries)
+        {
+            if (entry.status == ModLoadStatus::Loaded)
+            {
+                activeMods.push_back(entry.mod);
+            }
+        }
+
         ModLoadOrderSorter sorter;
-        auto filteredMods = sorter.FilterDisabledMods(mods, settings);
-        auto dependencyValidMods = sorter.FilterMissingDependencies(filteredMods);
-        return sorter.SortMods(dependencyValidMods, settings);
+        plan.orderedMods = sorter.SortMods(activeMods, plan.settings);
+
+        std::unordered_map<std::string, size_t> orderedIndices;
+        for (size_t index = 0; index < plan.orderedMods.size(); ++index)
+        {
+            orderedIndices[plan.orderedMods[index].folderName] = index;
+        }
+
+        std::stable_sort(plan.entries.begin(), plan.entries.end(), [&](const auto& left, const auto& right) {
+            const bool leftLoaded = left.status == ModLoadStatus::Loaded;
+            const bool rightLoaded = right.status == ModLoadStatus::Loaded;
+            if (leftLoaded != rightLoaded)
+            {
+                return !leftLoaded;
+            }
+
+            if (!leftLoaded)
+            {
+                return left.mod.folderName < right.mod.folderName;
+            }
+
+            return orderedIndices[left.mod.folderName] < orderedIndices[right.mod.folderName];
+        });
+
+        plan.displayEntries = plan.entries;
+        return plan;
     }
 
     std::vector<ModLoadOrderEntry> ModLoadOrderHelper::DiscoverMods(const std::filesystem::path& modsPath) const
@@ -101,41 +228,6 @@ namespace PS {
 
             mods.push_back(std::move(mod));
         }
-
-        std::unordered_map<std::string, std::vector<std::string>> foldersByModId;
-        for (const auto& mod : mods)
-        {
-            foldersByModId[mod.modId].push_back(mod.folderName);
-        }
-
-        std::unordered_set<std::string> conflictingModIds;
-        for (const auto& [modId, folderNames] : foldersByModId)
-        {
-            if (folderNames.size() > 1)
-            {
-                std::ostringstream folders;
-                for (size_t index = 0; index < folderNames.size(); ++index)
-                {
-                    if (index > 0)
-                    {
-                        folders << ", ";
-                    }
-
-                    folders << "'" << folderNames[index] << "'";
-                }
-
-                PS::Log<RC::LogLevel::Error>(
-                    STR("Duplicate mod id '{}' found in folders {}. Skipping all conflicting mods.\n"),
-                    RC::to_generic_string(modId),
-                    RC::to_generic_string(folders.str())
-                );
-                conflictingModIds.insert(modId);
-            }
-        }
-
-        std::erase_if(mods, [&](const auto& mod) {
-            return conflictingModIds.contains(mod.modId);
-        });
 
         return mods;
     }

@@ -123,12 +123,12 @@ namespace Palworld {
         }
 
         const auto modsPath = GetModsPath();
-        m_orderedMods.clear();
+        m_modLoadPlan = {};
 
         if (fs::exists(modsPath))
         {
             PS::ModLoadOrderHelper loadOrderHelper;
-            m_orderedMods = loadOrderHelper.Resolve(modsPath);
+            m_modLoadPlan = loadOrderHelper.Resolve(modsPath);
         }
 
         m_modOrderDirty = false;
@@ -138,10 +138,15 @@ namespace Palworld {
     {
         RefreshOrderedMods();
 
-        for (const auto& mod : m_orderedMods)
+        for (const auto& mod : m_modLoadPlan.orderedMods)
         {
             callback(mod.modPath, RC::to_generic_string(mod.folderName));
         }
+    }
+
+    PS::ModLoadPlan PalMainLoader::GetModLoadPlanSnapshot() const
+    {
+        return m_modLoadPlan;
     }
 
     void PalMainLoader::SetupPostEngineInitLoaders()

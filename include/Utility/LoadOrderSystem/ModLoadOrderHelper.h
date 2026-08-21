@@ -35,9 +35,36 @@ namespace PS {
         std::vector<std::string> disabledMods{};
     };
 
+    enum class ModLoadStatus
+    {
+        Loaded,
+        Disabled,
+        DuplicateId,
+        MissingDependency,
+        DependencySkipped,
+        LoadFailed,
+        LoadOrderConflict
+    };
+
+    struct ModLoadPlanEntry
+    {
+        ModLoadOrderEntry mod{};
+        ModLoadStatus status = ModLoadStatus::Loaded;
+        std::string reason{};
+    };
+
+    struct ModLoadPlan
+    {
+        std::filesystem::path modsPath{};
+        ModLoadOrderSettings settings{};
+        std::vector<ModLoadPlanEntry> entries{};
+        std::vector<ModLoadOrderEntry> orderedMods{};
+        std::vector<ModLoadPlanEntry> displayEntries{};
+    };
+
     class ModLoadOrderHelper {
     public:
-        std::vector<ModLoadOrderEntry> Resolve(const std::filesystem::path& modsPath);
+        ModLoadPlan Resolve(const std::filesystem::path& modsPath);
 
     private:
         template<typename T>
